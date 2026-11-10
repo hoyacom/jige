@@ -1,14 +1,14 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>jige — a package manager for Macs Homebrew left behind</title>
-<meta name="description" content="Homebrew가 더 이상 지원하지 않는 오래된 macOS(Monterey 등)에서도 쓸 수 있는 패키지 관리자. Homebrew·MacPorts 공개 레시피를 그대로 읽어서 이 기기에 맞는 앱을 찾아 설치합니다. A package manager for old Macs Homebrew dropped support for.">
-<meta name="keywords" content="homebrew alternative, old mac package manager, homebrew unsupported macOS, macports, brew for monterey, legacy mac homebrew, 오래된 맥 패키지 관리자, homebrew 지원 종료">
+<meta name="description" content="A package manager for old Macs Homebrew dropped support for. jige reads Homebrew's and MacPorts' own public recipes and installs the right build for your exact OS and architecture — no Homebrew installation required.">
+<meta name="keywords" content="homebrew alternative, old mac package manager, homebrew unsupported macOS, macports, brew for monterey, legacy mac homebrew">
 <meta property="og:type" content="website">
 <meta property="og:title" content="jige — a package manager for Macs Homebrew left behind">
-<meta property="og:description" content="Homebrew가 더 이상 지원하지 않는 오래된 Mac을 위한 패키지 관리자. brew/MacPorts 레시피를 그대로 읽어서 설치합니다.">
+<meta property="og:description" content="A package manager for old Macs Homebrew dropped support for. Reads Homebrew's and MacPorts' own recipes and installs the right build for your machine.">
 <meta property="og:url" content="https://hoyacom.github.io/jige/">
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%23b5541e%22/><text x=%2250%22 y=%2268%22 font-size=%2258%22 text-anchor=%22middle%22 fill=%22white%22 font-family=%22Georgia,serif%22>지</text></svg>">
@@ -48,6 +48,11 @@
   a:hover{text-decoration:underline;}
   .wrap{max-width:860px; margin:0 auto; padding:0 24px;}
 
+  .lang-switch{text-align:center; padding:10px 0; font-size:12px; color:var(--ink-soft);}
+  .lang-switch a{color:var(--ink-soft);}
+  .lang-switch a:hover{color:var(--brand);}
+  .lang-switch .current{color:var(--brand); font-weight:600;}
+
   header.hero{
     padding:88px 0 64px; text-align:center;
     background:
@@ -58,7 +63,6 @@
   h1 .hangul{color:var(--brand); font-weight:800;}
   .tagline{font-size:20px; color:var(--ink-soft); margin:0 0 10px;}
   .eyebrow{font-size:14px; color:var(--brand-dark); margin:0 0 30px; line-height:1.7;}
-  .eyebrow .en{color:var(--ink-soft); font-style:italic;}
 
   .install-box{
     display:inline-flex; align-items:center; gap:14px;
@@ -81,7 +85,6 @@
   .jige-photo{margin:40px auto 0; max-width:520px; text-align:center;}
   .jige-photo img{width:100%; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.18); filter:sepia(.15);}
   .jige-photo figcaption{margin-top:10px; font-size:12px; color:var(--ink-soft); line-height:1.6;}
-  .jige-photo figcaption .en{display:block; font-style:italic;}
 
   section{padding:56px 0; border-top:1px solid var(--line);}
   h2{font-size:28px; margin:0 0 8px;}
@@ -95,7 +98,7 @@
   }
   .concept-icon{width:44px; height:44px; margin-bottom:10px;}
   .concept-card .word{font-family:var(--mono); font-weight:700; font-size:22px; color:var(--brand);}
-  .concept-card .ko{color:var(--ink-soft); font-size:14px; margin-bottom:10px;}
+  .concept-card .sub{color:var(--ink-soft); font-size:14px; margin-bottom:10px;}
   .concept-card .maps{margin-top:14px; font-size:13px; color:var(--ink-soft);}
   .concept-card .maps b{color:var(--ink);}
 
@@ -133,10 +136,14 @@
 </head>
 <body>
 
+<nav class="lang-switch">
+  <span class="current">EN</span> · <a href="ko/">한국어</a> · <a href="ja/">日本語</a>
+</nav>
+
 <header class="hero">
   <div class="wrap">
     <svg class="jige-mark" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <!-- 지게: A자 프레임 + 짐(보따리) -->
+      <!-- jige: A-frame + bundle -->
       <path d="M30 108 L54 18" stroke="#8a5a36" stroke-width="6" stroke-linecap="round"/>
       <path d="M90 108 L66 18" stroke="#8a5a36" stroke-width="6" stroke-linecap="round"/>
       <path d="M38 78 L82 78" stroke="#8a5a36" stroke-width="6" stroke-linecap="round"/>
@@ -145,24 +152,23 @@
       <path d="M22 50 Q60 28 98 50 L92 72 Q60 56 28 72 Z" fill="#d98b3f" stroke="#b5541e" stroke-width="3" stroke-linejoin="round"/>
     </svg>
     <h1><span class="hangul">지게</span> jige</h1>
-    <p class="tagline">brew 없이도, port 없이도 — 이 기기에 맞는 앱을 찾아서 날라다 설치</p>
-    <p class="eyebrow">Homebrew가 더 이상 지원하지 않는 오래된 Mac을 위한 패키지 관리자<br>
-    <span class="en">A package manager for old Macs that Homebrew dropped support for — Monterey and earlier, still covered.</span></p>
+    <p class="tagline">No brew. No port. jige finds and installs the right build for this machine.</p>
+    <p class="eyebrow">A package manager for old Macs that Homebrew dropped support for —<br>
+    Monterey and earlier, still covered.</p>
 
     <div class="install-box">
       <span class="prompt">$</span>
       <code id="install-cmd">/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hoyacom/jige/main/install.sh)"</code>
-      <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('install-cmd').textContent); this.textContent='복사됨 ✓'; setTimeout(()=>this.textContent='복사',1500)">복사</button>
+      <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('install-cmd').textContent); this.textContent='Copied ✓'; setTimeout(()=>this.textContent='Copy',1500)">Copy</button>
     </div>
-    <p class="sub-install">새 Mac이어도 상관없습니다 — Homebrew도 MacPorts도 설치돼 있을 필요 없습니다.</p>
+    <p class="sub-install">Works on a brand new Mac too — neither Homebrew nor MacPorts need to be installed first.</p>
 
     <figure class="jige-photo">
       <img src="https://upload.wikimedia.org/wikipedia/commons/1/12/%28Porter_carrying_clay_pots_strapped_to_A-frame_on_his_back%29_%284095353619%29.jpg"
            alt="A Korean porter carrying pots on a jige, a traditional A-frame wooden carrier, circa 1904"
            loading="lazy">
       <figcaption>
-        지게(A자형 나무 지게)로 짐을 나르는 모습, 1904년경.
-        <span class="en">A jige in use — the traditional Korean A-frame carrier this project is named after. (ca. 1904)</span>
+        A jige in use — the traditional Korean A-frame carrier this project is named after. (ca. 1904)
         <br>Photo: <a href="https://commons.wikimedia.org/wiki/File:(Porter_carrying_clay_pots_strapped_to_A-frame_on_his_back)_(4095353619).jpg">Cornell University Library</a>, no known copyright restrictions.
       </figcaption>
     </figure>
@@ -171,59 +177,51 @@
 
 <section>
   <div class="wrap">
-    <h2>Homebrew가 더 이상 지원하지 않는 Mac을 위해</h2>
+    <h2>For Macs Homebrew left behind</h2>
     <p class="lead">
-    <code>brew doctor</code>를 돌리면 "Your Mac OS is too old" 같은 경고가 뜨고,
-    <code>brew install</code>이 구버전 macOS(Monterey, Big Sur, Catalina…)에서
-    더 이상 bottle을 안 받아줄 때가 있습니다. Apple Silicon이 아닌 오래된 Intel Mac,
-    2015년식 iMac처럼 더 이상 공식 지원 목록에 없는 기기도 마찬가지입니다.
-    jige는 이런 기기에서도 — Homebrew를 설치하지 않고도 — Homebrew·MacPorts가
-    공개해둔 레시피를 그대로 읽어서 이 기기에 맞는 버전을 찾아 설치합니다.</p>
-    <p class="lead" style="font-style:italic; color:var(--ink-soft)">
-    If <code>brew</code> refuses to run on your old macOS (Monterey, Big Sur, or earlier)
-    or your unsupported Intel Mac, jige reads Homebrew's and MacPorts' own public recipe
-    data over plain HTTP — no Homebrew installation required — and installs the right
-    build for your exact OS and architecture.</p>
+    Run <code>brew doctor</code> on an old macOS (Monterey, Big Sur, Catalina…) and you'll see
+    warnings like "Your Mac OS is too old" — <code>brew install</code> can simply stop shipping
+    bottles for it. Older Intel Macs, like a 2015 iMac, fall off the officially supported list the
+    same way. jige reads Homebrew's and MacPorts' own public recipe data over plain HTTP — no
+    Homebrew installation required — and installs the right build for your exact OS and
+    architecture, even on a machine brew has already given up on.</p>
   </div>
 </section>
 
 <section>
   <div class="wrap">
-    <h2>짐(jim)과 도구(dogu)</h2>
-    <p class="lead">Homebrew가 설치 대상을 <b>formula</b>(터미널용)와 <b>cask</b>(Dock에 뜨는 GUI 앱)로 나누듯,
-    jige는 OS에 상관없이 똑같은 질문 하나로 나눕니다.<br>
-    <span style="font-style:italic">Just as Homebrew splits installs into <b>formula</b> (terminal tools) and
-    <b>cask</b> (Dock-visible GUI apps), jige draws the same line with one OS-agnostic question.</span></p>
+    <h2>jim and dogu</h2>
+    <p class="lead">Just as Homebrew splits installs into <b>formula</b> (terminal tools) and
+    <b>cask</b> (Dock-visible GUI apps), jige draws the same line with one OS-agnostic question.</p>
 
     <div class="question">
-      "설치하면 Dock/런처에 아이콘이 생겨서 더블클릭으로 띄우는 독립 프로그램인가?"
-      <br><span style="font-style:italic; font-size:14px">"Does installing it put an icon in the Dock/launcher you double-click to open?"</span>
+      "Does installing it put an icon in the Dock/launcher you double-click to open?"
     </div>
 
     <div class="concept-grid">
       <div class="concept-card">
         <svg class="concept-icon" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <!-- jim: 보따리(묶은 짐 꾸러미) -->
+          <!-- jim: a wrapped bundle -->
           <path d="M24 6 L24 14" stroke="#b5541e" stroke-width="3" stroke-linecap="round"/>
           <circle cx="24" cy="5" r="2.6" fill="#b5541e"/>
           <path d="M9 18 Q24 8 39 18 L35 38 Q24 44 13 38 Z" fill="#e8a85c" stroke="#b5541e" stroke-width="2.5" stroke-linejoin="round"/>
           <path d="M14 20 Q24 28 34 20" stroke="#8a3e14" stroke-width="2" fill="none" stroke-linecap="round"/>
         </svg>
         <div class="word">jim</div>
-        <div class="ko">짐 — 지게에 통째로 얹는 짐</div>
-        Dock·런처에 아이콘이 생기는 GUI 앱.
-        <div class="maps">대응: Homebrew의 <b>cask</b></div>
+        <div class="sub">"load" — the whole bundle carried on the jige frame</div>
+        A GUI app that gets a Dock/launcher icon.
+        <div class="maps">Maps to Homebrew's <b>cask</b></div>
       </div>
       <div class="concept-card">
         <svg class="concept-icon" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <!-- dogu: 스패너(연장) -->
+          <!-- dogu: a wrench -->
           <path d="M31 10a7 7 0 0 0-9.5 8.5L10 30l3 3 3 3 11.5-11.5A7 7 0 0 0 36 17" stroke="#2f6f5e" stroke-width="3" fill="#bfe0d6" stroke-linejoin="round" stroke-linecap="round"/>
           <circle cx="14" cy="34" r="2" fill="#2f6f5e"/>
         </svg>
         <div class="word">dogu</div>
-        <div class="ko">도구 — 지게꾼이 손에 쥐고 바로 쓰는 연장</div>
-        터미널에서 직접 쓰는 명령·라이브러리.
-        <div class="maps">대응: Homebrew의 <b>formula</b></div>
+        <div class="sub">"tool" — what a porter carries and uses by hand</div>
+        A command or library you use straight from the terminal.
+        <div class="maps">Maps to Homebrew's <b>formula</b></div>
       </div>
     </div>
   </div>
@@ -231,63 +229,54 @@
 
 <section>
   <div class="wrap">
-    <h2>한 번에 검색, 한 번에 설치</h2>
-    <p class="lead">Homebrew(Cask/Formula) + MacPorts + Mac App Store + 자체 레포지토리를 동시에
-    뒤져서 어디 소속인지 분류까지 보여줍니다. 전부 공개 HTTP API라서, 이 기기에 brew·port·mas가
-    전혀 없어도 검색이 됩니다. Mac App Store 앱도 숫자 ID 몰라도 이름 그대로 설치됩니다.<br>
-    <span style="font-style:italic">One search covers Homebrew (Cask/Formula), MacPorts, the Mac App
+    <h2>One search. One install.</h2>
+    <p class="lead">One search covers Homebrew (Cask/Formula), MacPorts, the Mac App
     Store, and jige's own repository at once, tagged by source. All plain public HTTP APIs — no
-    brew, port, or mas required just to search. App Store apps install by name, no numeric ID needed.</span></p>
+    brew, port, or mas required just to search. App Store apps install by name, no numeric ID needed.</p>
 
     <div class="terminal">
       <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span></div>
       <pre><span class="p">$</span> jige search hop
-이름                         종류       분류              버전      설명
+Name                         Kind       Source            Version   Description
 <span class="jim">hop                          jim        Homebrew          0.5.2     View and edit HWP documents</span>
 <span class="jim">hopper-disassembler          jim        Homebrew          6.6.2     Reverse engineering tool...</span>
 <span class="dogu">hopenpgp-tools               dogu       Homebrew          0.26.1    Command-line tools for OpenPGP...</span>
 
-<span class="c">(Mac App Store는 기본 꺼짐 — brew만 쓰는 사람한테 매번 Apple 서버 호출은 낭비라서)</span>
+<span class="c">(Mac App Store is off by default — calling Apple's servers on every search
+ would be wasteful for people who only use brew.)</span>
 
 <span class="p">$</span> jige search hop <span class="dogu">--mas</span>
 <span class="jim">Hop - Endless Arcade Hopper  jim        Mac App Store     1.6       Limitless LLC</span>
 
-<span class="p">$</span> jige install "아스팔트: 레전드" <span class="dogu">--mas</span>
-<span class="c">레시피: 아스팔트: 레전드 (Mac App Store, 등록 버전 53.5.3)
-mas install 1491129197 실행 중...</span>
-완료: 아스팔트: 레전드 (Mac App Store, id 1491129197, 버전 53.5.3)</pre>
+<span class="p">$</span> jige install "Asphalt Legends" <span class="dogu">--mas</span>
+<span class="c">Recipe: Asphalt Legends (Mac App Store, listed version 53.5.3)
+Running mas install 1491129197...</span>
+Done: Asphalt Legends (Mac App Store, id 1491129197, version 53.5.3)</pre>
     </div>
   </div>
 </section>
 
 <section>
   <div class="wrap">
-    <h2>명령어</h2>
-    <p class="lead">brew와 port 둘 다 쓰는 이름 그대로 맞췄습니다.<br>
-    <span style="font-style:italic">Commands are named to match both brew and port, so either muscle memory works.</span></p>
+    <h2>Commands</h2>
+    <p class="lead">Named to match both brew and port, so either muscle memory works.</p>
     <table class="cmd">
       <tr><th>jige</th><th>brew</th><th>port</th></tr>
-      <tr><td><code>jige search &lt;검색어&gt;</code></td><td><code>brew search</code></td><td><code>port search</code></td></tr>
-      <tr><td><code>jige install &lt;이름&gt;</code></td><td><code>brew install</code></td><td><code>port install</code></td></tr>
-      <tr><td><code>jige info &lt;이름&gt;</code></td><td><code>brew info</code></td><td><code>port info</code></td></tr>
-      <tr><td><code>jige upgrade [이름]</code></td><td><code>brew upgrade</code></td><td><code>port upgrade</code></td></tr>
+      <tr><td><code>jige search &lt;query&gt;</code></td><td><code>brew search</code></td><td><code>port search</code></td></tr>
+      <tr><td><code>jige install &lt;name&gt;</code></td><td><code>brew install</code></td><td><code>port install</code></td></tr>
+      <tr><td><code>jige info &lt;name&gt;</code></td><td><code>brew info</code></td><td><code>port info</code></td></tr>
+      <tr><td><code>jige upgrade [name]</code></td><td><code>brew upgrade</code></td><td><code>port upgrade</code></td></tr>
       <tr><td><code>jige list</code></td><td><code>brew list</code></td><td><code>port installed</code></td></tr>
       <tr><td><code>jige config mas on|off</code></td><td>—</td><td>—</td></tr>
-      <tr><td><code>jige uninstall &lt;이름&gt;</code></td><td><code>brew uninstall</code></td><td><code>port uninstall</code></td></tr>
+      <tr><td><code>jige uninstall &lt;name&gt;</code></td><td><code>brew uninstall</code></td><td><code>port uninstall</code></td></tr>
     </table>
   </div>
 </section>
 
 <section>
   <div class="wrap">
-    <h2>왜 만들었나</h2>
-    <p class="why">Mac이 여러 대(Apple Silicon, Intel+Homebrew, Intel+MacPorts)인데, 전부 Homebrew로
-    통일하고 싶지는 않았습니다. 그런데 Homebrew-Cask는 "어떤 OS/아키텍처에 어떤 파일을,
-    어떤 체크섬으로" 받아야 하는지를 이미 공개 JSON API로 정리해두고 커뮤니티가 계속
-    최신으로 갱신해줍니다. jige는 이 JSON만 HTTP로 읽어서 brew 바이너리 없이 같은 정보를
-    활용합니다 — <strong>이미 있는 레포(Homebrew-Cask, MacPorts)는 그대로 래핑</strong>하고,
-    <strong>둘 다에 없는 것만</strong> 자체 레포지토리에 직접 추가합니다.</p>
-    <p class="why" style="font-style:italic">
+    <h2>Why this exists</h2>
+    <p class="why">
     Across several Macs (Apple Silicon, Intel+Homebrew, Intel+MacPorts), I didn't want to force
     Homebrew onto all of them. Homebrew-Cask already publishes a clean, community-maintained JSON
     API describing exactly what file and checksum each OS/architecture needs — jige just reads
