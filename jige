@@ -439,6 +439,16 @@ def _pad(s: str, width: int) -> str:
     return s + " " * max(0, width - _display_width(s))
 
 
+def _supports_color() -> bool:
+    return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+
+
+def _bold(s: str) -> str:
+    """항상 _pad()/_truncate_to_width()로 먼저 폭을 맞춘 뒤에 감싸야 함 — ANSI
+    코드 자체는 화면에 안 보이지만 글자 수로는 잡혀서, 먼저 감싸면 폭 계산이 틀어짐."""
+    return f"\033[1m{s}\033[0m" if _supports_color() else s
+
+
 def _truncate_to_width(s: str, max_width: int) -> str:
     if _display_width(s) <= max_width:
         return s
@@ -634,17 +644,23 @@ def cmd_search(query: str, limit_per_source: int = 8, mas: bool = False) -> None
     term_width = shutil.get_terminal_size(fallback=(100, 24)).columns
     desc_budget = max(20, term_width - prefix_w - 2)
 
+    installed = load_state()  # 이미 설치된 건 이름 칸을 굵게 표시 + desc에 [설치됨] 태그
+
     print(
         f"{_pad(t('col_name'), name_w)}  {_pad(t('col_kind'), kind_w)}  "
         f"{_pad(t('col_source'), source_w)}  {_pad(t('col_version'), version_w)}  {t('col_desc')}"
     )
     print("-" * min(term_width, prefix_w + 20))
     for h, kind, source, version in zip(rows, kinds, sources, display_versions):
-        desc = _truncate_to_width(h["desc"] or "", desc_budget)
-        print(
-            f"{_pad(h['name'], name_w)}  {_pad(kind, kind_w)}  "
-            f"{_pad(source, source_w)}  {_pad(version, version_w)}  {desc}"
-        )
+        name_field = _pad(h["name"], name_w)
+        prefix = ""
+        if h["name"] in installed:
+            name_field = _bold(name_field)  # _pad()로 폭을 먼저 맞춘 뒤에 감싸야 함
+            prefix = "[설치됨] "
+        # prefix도 desc_budget 안에서 같이 자리를 쓰게 — 안 그러면 뒤에 덧붙이는 순간
+        # 폭 계산이 틀어져서 다시 줄바꿈이 생김
+        desc = prefix + _truncate_to_width(h["desc"] or "", desc_budget - _display_width(prefix))
+        print(f"{name_field}  {_pad(kind, kind_w)}  {_pad(source, source_w)}  {_pad(version, version_w)}  {desc}")
 
     print()
     print(t("install_hint"))
