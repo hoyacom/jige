@@ -29,19 +29,39 @@ ln -sf "$(pwd)/jige" /usr/local/bin/jige
 ## 사용법
 
 ```bash
-jige install hop
+jige search dbeaver   # 어디 소속인지(Homebrew Cask/CLI, MacPorts, 자체 레포지토리) 분류해서 통합 검색
+jige install hop      # 설치/업데이트
 ```
 
-1. `sw_vers`/`uname -m`으로 이 기기의 macOS 코드네임·아키텍처를 확인
-2. `recipes/<token>.json`이 있으면 그걸, 없으면
+사용자는 brew가 있는지, MacPorts인지, 어떤 아키텍처인지 몰라도 됩니다 —
+`jige`가 이 기기(`sw_vers`/`uname -m`)에 맞춰 알아서 찾습니다.
+
+### search
+
+세 곳을 동시에 뒤져서 한 표로 보여줍니다:
+
+1. **Homebrew(Cask/CLI)** — `formulae.brew.sh`의 전체 목록(cask.json/formula.json)을
+   로컬에 캐시(24시간)해두고 이름·설명으로 찾음. macOS/Linux 둘 다 커버.
+2. **MacPorts** — `ports.macports.org`의 공개 검색 API를 그대로 호출(macOS에서만).
+3. **자체 레포지토리** — 이 저장소의 `recipes/*.json`.
+
+**셋 다 그냥 공개 HTTP API라서, 이 기기에 brew나 port 명령이 전혀 없어도 검색은 됩니다**
+(Homebrew·MacPorts를 설치하지 않은 기기에서도 똑같이 동작).
+
+### install
+
+1. `recipes/<token>.json`이 있으면 그걸, 없으면
    `https://formulae.brew.sh/api/cask/<token>.json`을 읽음
-3. 이 기기에 맞는 다운로드 URL·sha256을 레시피에서 고름
-4. 다운로드(`~/Library/Caches/jige/downloads/`에 캐시) 후 sha256 검증
-5. DMG를 마운트해서 `.app`을 `/Applications`로 복사, 마운트 해제
-6. 설치 전/후 버전을 `Info.plist`에서 확인해서 출력
+2. 이 기기에 맞는 다운로드 URL·sha256을 레시피에서 고름
+3. 다운로드(`~/Library/Caches/jige/downloads/`에 캐시) 후 sha256 검증
+4. DMG를 마운트해서 `.app`을 `/Applications`로 복사, 마운트 해제
+5. 설치 전/후 버전을 `Info.plist`에서 확인해서 출력
 
 ## 현재 범위 / 다음에 할 일
 
-- DMG 안에 `.app`이 바로 들어있는 Cask만 지원합니다(pkg, zip, 중첩 폴더 등은 아직 미지원).
-- `recipes/`는 아직 예시가 없습니다 — Homebrew-Cask에 없는 앱이 생기면 추가합니다.
-- `jige list` / `jige search` 같은 보조 명령은 필요해지면 추가합니다(지금은 없음).
+- `install`은 아직 DMG 안에 `.app`이 바로 들어있는 **Homebrew-Cask 항목만** 설치합니다.
+- `search`로 나온 **MacPorts/Homebrew(CLI) 결과는 아직 jige가 직접 설치 안 함** — 포트/포뮬러 빌드는
+  각 패키지 매니저 자체 기능을 그대로 쓰는 쪽(예: `sudo port install`)으로 다음에 연결할 계획.
+  (brew/MacPorts 자체를 설치하라는 뜻이 아니라, 둘 다 없는 기기에서도 쓸 수 있게
+  `recipes/`로 자체 설치를 늘려가는 쪽이 기본 방향.)
+- `recipes/`는 아직 예시가 없습니다 — Homebrew-Cask/MacPorts에 둘 다 없는 앱이 생기면 추가합니다.

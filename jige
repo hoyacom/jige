@@ -18,20 +18,34 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import platform
 import plistlib
 import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent
 LOCAL_RECIPES_DIR = REPO_ROOT / "recipes"
 CACHE_DIR = Path.home() / "Library" / "Caches" / "jige" / "downloads"
+INDEX_CACHE_DIR = Path.home() / "Library" / "Caches" / "jige" / "index"
+INDEX_MAX_AGE_SECONDS = 24 * 3600
 
 HOMEBREW_CASK_API = "https://formulae.brew.sh/api/cask/{token}.json"
+HOMEBREW_BULK_API = "https://formulae.brew.sh/api/{kind}.json"  # kind: cask | formula
+MACPORTS_SEARCH_API = "https://ports.macports.org/api/v1/ports/"
+
+SOURCE_LABEL = {
+    "homebrew-cask": "Homebrew(Cask)",
+    "homebrew-formula": "Homebrew(CLI)",
+    "macports": "MacPorts",
+    "local": "자체 레포지토리",
+}
 
 MACOS_CODENAME = {
     "10.15": "catalina", "11": "big_sur", "12": "monterey", "13": "ventura",
@@ -50,6 +64,152 @@ def sw_vers_codename() -> str:
 
 def arch() -> str:
     return subprocess.check_output(["uname", "-m"], text=True).strip()
+
+
+def current_os() -> str:
+    system = platform.system()
+    return {"Darwin": "macos", "Linux": "linux"}.get(system, system.lower())
+
+
+# ---------------------------------------------------------------------------
+# search: Homebrew(cask+formula, mac+linux 공용) + MacPorts(mac) + 자체 레포지토리
+# ---------------------------------------------------------------------------
+
+def _download_json(url: str, dest: Path) -> None:
+    print(f"(처음 검색이거나 캐시가 24시간 지남 — {dest.name} 새로 받는 중...)", file=sys.stderr)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    urllib.request.urlretrieve(url, tmp)
+    tmp.rename(dest)
+
+
+def load_homebrew_index(kind: str) -> list[dict]:
+    """kind: 'cask' 또는 'formula'. 전체 목록을 로컬에 캐시해서 재사용."""
+    INDEX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    dest = INDEX_CACHE_DIR / f"{kind}.json"
+    if not dest.exists() or (time.time() - dest.stat().st_mtime) > INDEX_MAX_AGE_SECONDS:
+        try:
+            _download_json(HOMEBREW_BULK_API.format(kind=kind), dest)
+        except Exception as e:  # 네트워크 문제 등 — 캐시가 있으면 그거라도 쓴다
+            if not dest.exists():
+                print(f"Homebrew {kind} 인덱스를 못 받았음: {e}", file=sys.stderr)
+                return []
+    return json.loads(dest.read_text())
+
+
+def _rank(query: str, *fields: str) -> int:
+    """낮을수록 더 관련 있음. 매칭 안 되면 None 대신 큰 값을 돌려주는 쪽에서 걸러냄."""
+    q = query.lower()
+    for i, field in enumerate((f.lower() for f in fields if f)):
+        if field == q:
+            return i * 10 + 0
+        if field.startswith(q):
+            return i * 10 + 1
+        if q in field:
+            return i * 10 + 2
+    return 999
+
+
+def search_homebrew(query: str) -> list[dict]:
+    hits = []
+    for kind, source in (("cask", "homebrew-cask"), ("formula", "homebrew-formula")):
+        for entry in load_homebrew_index(kind):
+            if kind == "cask":
+                token = entry.get("token", "")
+                display_name = entry.get("name")
+                display_name = display_name[0] if isinstance(display_name, list) else (display_name or token)
+                version = entry.get("version", "?")
+            else:  # formula: name은 그냥 문자열이고 그 자체가 설치 식별자
+                token = entry.get("name", "")
+                display_name = token
+                version = (entry.get("versions") or {}).get("stable", "?")
+            desc = entry.get("desc", "")
+            rank = _rank(query, token, display_name, desc)
+            if rank < 999:
+                hits.append({
+                    "name": token,
+                    "version": version,
+                    "desc": desc,
+                    "source": source,
+                    "rank": rank,
+                })
+    return hits
+
+
+def search_macports(query: str) -> list[dict]:
+    if current_os() != "macos":
+        return []
+    try:
+        with urllib.request.urlopen(
+            f"{MACPORTS_SEARCH_API}?search={urllib.parse.quote(query)}", timeout=10
+        ) as r:
+            data = json.load(r)
+    except Exception as e:
+        print(f"MacPorts 검색 실패(무시하고 계속): {e}", file=sys.stderr)
+        return []
+    hits = []
+    for entry in data.get("results", [])[:30]:
+        name = entry.get("name", "")
+        desc = entry.get("description", "")
+        rank = _rank(query, name, desc)
+        hits.append({
+            "name": name,
+            "version": entry.get("version", "?"),
+            "desc": desc,
+            "source": "macports",
+            "rank": rank,
+        })
+    return hits
+
+
+def search_local_recipes(query: str) -> list[dict]:
+    hits = []
+    if not LOCAL_RECIPES_DIR.exists():
+        return hits
+    for path in LOCAL_RECIPES_DIR.glob("*.json"):
+        try:
+            entry = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            continue
+        name = entry.get("name", path.stem)
+        name = name[0] if isinstance(name, list) else name
+        desc = entry.get("desc", "")
+        rank = _rank(query, path.stem, name, desc)
+        if rank < 999:
+            hits.append({
+                "name": path.stem,
+                "version": entry.get("version", "?"),
+                "desc": desc,
+                "source": "local",
+                "rank": rank,
+            })
+    return hits
+
+
+def cmd_search(query: str, limit_per_source: int = 8) -> None:
+    all_hits = search_local_recipes(query) + search_macports(query) + search_homebrew(query)
+    if not all_hits:
+        print(f"'{query}' 검색 결과 없음 (Homebrew / MacPorts / 자체 레포지토리 전부).")
+        return
+
+    by_source: dict[str, list[dict]] = {}
+    for h in all_hits:
+        by_source.setdefault(h["source"], []).append(h)
+
+    rows = []
+    for source, hits in by_source.items():
+        hits.sort(key=lambda h: h["rank"])
+        rows.extend(hits[:limit_per_source])
+    rows.sort(key=lambda h: h["rank"])
+
+    name_w = max(4, min(28, max(len(h["name"]) for h in rows)))
+    print(f"{'이름':<{name_w}}  {'분류':<16}  {'버전':<12}  설명")
+    print("-" * (name_w + 16 + 12 + 40))
+    for h in rows:
+        desc = (h["desc"] or "")[:60]
+        print(f"{h['name']:<{name_w}}  {SOURCE_LABEL[h['source']]:<16}  {h['version']:<12}  {desc}")
+
+    print()
+    print("설치: jige install <이름>  (Homebrew(Cask) 항목만 지금 바로 자동 설치 지원 — 나머지는 다음 단계에서 연결)")
 
 
 def fetch_recipe(token: str) -> tuple[dict, str]:
@@ -176,9 +336,14 @@ def main() -> None:
     p_install = sub.add_parser("install", help="앱 설치/업데이트")
     p_install.add_argument("token", help="Homebrew-Cask 토큰 (예: hop)")
 
+    p_search = sub.add_parser("search", help="Homebrew/MacPorts/자체 레포지토리에서 통합 검색")
+    p_search.add_argument("query", help="검색어")
+
     args = parser.parse_args()
     if args.command == "install":
         cmd_install(args.token)
+    elif args.command == "search":
+        cmd_search(args.query)
 
 
 if __name__ == "__main__":
