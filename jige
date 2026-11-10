@@ -1082,22 +1082,6 @@ def cmd_install(token: str, mas: bool = False, latest: bool = False) -> None:
     print()
     print(f"완료: {app_label}  {before or '(미설치)'} -> {after}")
 
-    if legacy_used:
-        confirmation = {
-            "date": datetime.date.today().isoformat(),
-            "macos": ".".join(str(p) for p in macos_version_tuple()),
-            "arch": cpu,
-            "note": "실제 설치 성공",
-        }
-        print(f"이 대체판({legacy_used['version']})이 이 Mac({codename})에서 설치됐습니다.")
-        print(f"현재 신뢰도: {trust_label(legacy_used)} — 확인 기록 하나 추가해주시면 도움이 됩니다.")
-        offer_github_contribution(
-            f"confirm: {token} {legacy_used['version']} on macOS {codename}",
-            f"recipes/legacy/{token}.json의 confirmations 배열에 아래 한 줄 추가해주세요:\n\n"
-            f"{json.dumps(confirmation, ensure_ascii=False, indent=2)}\n",
-            fallback_edit_path=f"recipes/legacy/{token}.json",
-        )
-
 
 def cmd_info(token: str) -> None:
     recipe, source = fetch_recipe(token)
