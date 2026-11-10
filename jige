@@ -656,7 +656,7 @@ def cmd_search(query: str, limit_per_source: int = 8, mas: bool = False) -> None
         prefix = ""
         if h["name"] in installed:
             name_field = _bold(name_field)  # _pad()로 폭을 먼저 맞춘 뒤에 감싸야 함
-            prefix = "[설치됨] "
+            prefix = "★ "
         # prefix도 desc_budget 안에서 같이 자리를 쓰게 — 안 그러면 뒤에 덧붙이는 순간
         # 폭 계산이 틀어져서 다시 줄바꿈이 생김
         desc = prefix + _truncate_to_width(h["desc"] or "", desc_budget - _display_width(prefix))
