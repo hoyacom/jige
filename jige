@@ -286,7 +286,7 @@ def fetch_recipe(token: str) -> tuple[dict, str]:
     if local_path.exists():
         return json.loads(local_path.read_text()), f"로컬 레시피 ({local_path})"
 
-    url = HOMEBREW_CASK_API.format(token=token)
+    url = HOMEBREW_CASK_API.format(token=urllib.parse.quote(token, safe=""))
     try:
         with urllib.request.urlopen(url, timeout=15) as r:
             return json.load(r), "Homebrew-Cask 공개 레시피"
