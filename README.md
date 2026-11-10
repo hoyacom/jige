@@ -8,10 +8,10 @@
 ## 설치 (새 Mac에서 딱 한 줄)
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/<GITHUB_USER>/jige/main/install.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hoyacom/jige/main/install.sh)"
 ```
 
-> `<GITHUB_USER>`는 이 저장소를 올린 GitHub 계정으로 바꿔야 합니다 — 레포 공개되면 바로 채웁니다.
+> `hoyacom`는 이 저장소를 올린 GitHub 계정으로 바꿔야 합니다 — 레포 공개되면 바로 채웁니다.
 
 Homebrew도 없고 MacPorts도 없는 기기여도 상관없습니다. 위 한 줄이 하는 일:
 1. `jige` 저장소를 받아서 `~/.jige`에 둠

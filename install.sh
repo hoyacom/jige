@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # jige 부트스트랩 설치기 — brew.sh의 한 줄 설치와 같은 역할.
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/<GITHUB_USER>/jige/main/install.sh)"
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hoyacom/jige/main/install.sh)"
 set -euo pipefail
 
-REPO_URL="https://github.com/<GITHUB_USER>/jige.git"
+REPO_URL="https://github.com/hoyacom/jige.git"
 INSTALL_DIR="$HOME/.jige"
 BIN_TARGET="/usr/local/bin/jige"
 
