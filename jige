@@ -202,7 +202,9 @@ def search_macports(query: str) -> list[dict]:
 
 
 def search_mas(query: str) -> list[dict]:
-    if current_os() != "macos":
+    # mas를 따로 설치한 사람만 Mac App Store까지 뒤짐 — brew/macports만 쓰는
+    # 사람한테는 매번 검색마다 Apple 서버에 공짜로 쏘는 게 낭비라 기본은 끔.
+    if current_os() != "macos" or not shutil.which("mas"):
         return []
     try:
         params = urllib.parse.urlencode(
@@ -284,8 +286,9 @@ def cmd_search(query: str, limit_per_source: int = 8) -> None:
 
 
 def fetch_mas_recipe(token: str) -> dict | None:
-    """App Store 앱 이름으로 정확히 일치하는 걸 찾아서 (mas install이 쓸 숫자 id 포함) 반환."""
-    if current_os() != "macos":
+    """App Store 앱 이름으로 정확히 일치하는 걸 찾아서 (mas install이 쓸 숫자 id 포함) 반환.
+    mas가 설치돼있지 않으면 애초에 설치도 못 하니 조회 자체를 건너뜀."""
+    if current_os() != "macos" or not shutil.which("mas"):
         return None
     try:
         params = urllib.parse.urlencode(
