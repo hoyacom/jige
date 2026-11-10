@@ -62,6 +62,19 @@ $ jige install "아스팔트: 레전드" --mas
 레시피: 아스팔트: 레전드 (Mac App Store, 등록 버전 53.5.3)
 mas install 1491129197 실행 중...
 완료: 아스팔트: 레전드 (Mac App Store, id 1491129197, 버전 53.5.3)
+
+$ jige install virtualbox          # macOS Monterey에서 — 최신 7.2.22는 Ventura(13) 이상이 필요
+macOS 코드네임: monterey / 아키텍처: x86_64
+레시피: ['Oracle VirtualBox'] (Homebrew-Cask 공개 레시피, 등록 버전 7.2.22,175245)
+
+참고: 이 Mac은 macOS monterey(12.7.6)입니다.
+
+  최신판   7.2.22,175245 macOS 13 이상 필요 → 이 Mac에서 설치 안 될 가능성 높음
+  대체판   7.1.18     macOS 11~14 지원, 이 Mac에서 동작 확인됨 (참고: Oracle 기준 더 이상 지원 안 하는 EOL 버전)
+
+어느 걸 설치할까요? [1] 대체판(추천)  [2] 최신판(강행)  번호 [1]:
+...
+관리자 권한(sudo)이 필요합니다 — 비밀번호를 입력하세요.
 ```
 
 사용자는 brew가 있는지, MacPorts인지, 어떤 아키텍처인지 몰라도 됩니다 —
@@ -99,15 +112,45 @@ mas install 1491129197 실행 중...
 
 **Homebrew-Cask·자체 레포지토리(jim)**:
 1. `recipes/<token>.json`이 있으면 그걸, 없으면 Homebrew-Cask의 공개 레시피를 읽음
-2. 이 기기의 macOS 코드네임·CPU 아키텍처에 맞는 다운로드 URL·sha256을 레시피에서 고름
-3. 다운로드(`~/Library/Caches/jige/downloads/`에 캐시) 후 sha256 검증
-4. DMG를 마운트해서 `.app`을 `/Applications`로 복사, 마운트 해제
-5. `~/Library/Application Support/jige/installed.json`에 설치 기록 남김 (`list`/`upgrade`가 이걸 씀)
+2. `recipes/legacy/<token>.json`에 이 기기의 macOS에서 쓸 수 있는 대체판이 큐레이션돼 있고
+   최신판은 이 macOS를 지원 안 하는 걸로 돼 있으면, 안내하고 물어본 뒤 그 대체판으로 바꿈
+   (비대화형 실행이면 자동으로 대체판 선택, `--latest`로 묻지 않고 최신판 강행 가능)
+3. 이 기기의 macOS 코드네임·CPU 아키텍처에 맞는 다운로드 URL·sha256을 레시피에서 고름
+4. 다운로드(`~/Library/Caches/jige/downloads/`에 캐시) 후 sha256 검증
+5. DMG를 마운트해서 `.app`이 있으면 `/Applications`로 복사, `.pkg`(pre/postflight 스크립트가 있는
+   설치 패키지)면 `sudo installer`로 그대로 설치 — 마운트 해제
+6. `~/Library/Application Support/jige/installed.json`에 설치 기록 남김 (`list`/`upgrade`가 이걸 씀)
 
 **Mac App Store**:
 1. Homebrew-Cask에 없으면 iTunes Search API에서 이름이 정확히 일치하는 앱을 찾아 숫자 ID를 얻음
 2. 그 ID로 `mas install <id>`를 그대로 호출 — 다운로드·인증은 로그인된 App Store 세션이 처리
    (비밀번호/Touch ID는 전부 macOS 시스템 UI가 처리, jige·mas 둘 다 credential을 다루지 않음)
+
+### `recipes/legacy/`는 누가 채우나 — 커뮤니티, AI 아님
+
+Homebrew-Cask의 `depends_on.macos`가 비어있는 경우가 많아서(실제로 VirtualBox도 비어있음),
+"최신판이 이 macOS를 더 이상 지원 안 함"이란 지식은 AI가 자동으로 알아낼 수 없습니다 —
+체크섬까지 AI가 추측하게 하면 jige의 핵심 안전장치(sha256 검증)가 무의미해지므로,
+**이 정보는 항상 사람이 공식 홈페이지/문서를 직접 확인해서 등록**합니다.
+
+호스팅 서버 없이 돌아가도록 GitHub 자체를 그대로 씁니다:
+- 각 버전 항목엔 `confirmations` 배열이 있고, 실제로 설치해본 사람이 날짜·macOS·아키텍처를
+  한 줄 추가할 때마다 신뢰도가 쌓입니다 — `search`/`install`에 🆕(등록만 됨) / ✓N(N명 확인) /
+  ✓✓N(여러 명 확인)으로 표시됩니다. jige는 이 배열 길이만 셀 뿐, 따로 집계하는 서버가 없습니다.
+- 설치가 끝나면(대체판을 썼을 때) 또는 설치 방식을 아직 모를 때, jige가 `gh` CLI(설치·로그인돼
+  있으면)로 바로 `gh issue create`까지 터미널에서 실행하자고 물어봅니다 — 웹에 안 가도 됩니다.
+  `gh`가 없으면 GitHub의 "제목/내용 미리 채워진 새 이슈" 링크와 "이 파일을 웹에서 수정하면
+  자동으로 포크+PR까지 만들어주는" 링크를 보여주는 걸로 대신합니다.
+- PR 생성 자체(브랜치 만들기·커밋·push)는 jige가 자동으로 하지 않습니다 — 이슈로 받아서
+  메인테이너가 직접 반영하는 쪽이 지금 규모엔 더 안전하고 단순합니다.
+- `recipes/legacy/<token>.json`은 이 저장소에 로컬로 있으면 그걸 우선 쓰고, 없으면
+  `raw.githubusercontent.com`의 `main` 브랜치 버전을 Homebrew 인덱스와 똑같은 **24시간
+  캐시**로 받아옵니다(`~/Library/Caches/jige/index/legacy/`). 그래서 누군가의 PR이 머지되면
+  jige 코드 자체를 업데이트(`jige update`)하지 않아도 24시간 안에 모든 사용자에게 그 정보가
+  퍼집니다 — 데이터 갱신과 코드 업데이트가 분리돼 있습니다.
+- 대체판으로 설치하면 `jige list`에도 그 사실과 최신판 정보가 계속 남습니다
+  (`audacity   3.7.9 (대체판, 최신 4.0.2는 macOS 13+ 필요)`) — 나중에 macOS를 업그레이드하고
+  `jige upgrade`를 다시 돌리면 그때는 최신판이 설치됩니다.
 
 ## 왜 만들었나
 
@@ -125,9 +168,12 @@ Mac이 여러 대(Apple Silicon, Intel+Homebrew, Intel+MacPorts)인데, 전부 H
 
 ## 현재 범위 / 다음에 할 일
 
-- `install`은 DMG 안에 `.app`이 바로 들어있는 **Homebrew-Cask·Mac App Store·자체 레포지토리** 항목을 설치합니다.
+- `install`은 DMG 안에 `.app`이 바로 들어있거나 `.pkg` 설치 패키지인 **Homebrew-Cask·Mac App
+  Store·자체 레포지토리** 항목을 설치합니다.
 - `search`로 나온 **MacPorts/Homebrew(CLI) 결과는 아직 jige가 직접 설치 안 함** — 각 패키지
   매니저 자체 기능을 그대로 쓰는 쪽(예: `sudo port install`)으로 다음에 연결할 계획.
 - Linux는 Ubuntu(`apt`)·RedHat 계열(`dnf`)까지만 지원 범위로 다음에 추가합니다.
 - MacPorts 결과의 `jim`/`dogu` 구분은 포트파일 상세조회로 다음에 보강합니다.
-- `recipes/`는 아직 예시가 없습니다.
+- `recipes/`는 아직 예시가 없습니다. `recipes/legacy/<token>.json`에는 예시가 하나 있습니다
+  (`virtualbox.json` — 최신판이 더 이상 지원 안 하는 macOS에서 쓸 대체판 큐레이션, 스키마는
+  `recipes/<token>.json`과 같은 cask 필드를 그대로 재사용).

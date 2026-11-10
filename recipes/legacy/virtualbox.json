@@ -1,0 +1,38 @@
+{
+  "versions": [
+    {
+      "version": "7.1.18",
+      "min_macos": "11",
+      "max_macos": "14",
+      "latest_min_macos": "13",
+      "vendor_status": "eol",
+      "note": "최신 7.2부터 macOS 13(Ventura) 이상 필요 (Oracle 공식 문서 'Available Installation Packages' 기준 — Homebrew Cask의 depends_on.macos엔 이 정보가 없어서(실제로 비어있음) 직접 확인해 등록함, 2026-11-10). 7.1.18이 7.1.x의 마지막 릴리스이고, Oracle은 7.1.x를 더 이상 지원 안 함.",
+      "source": [
+        "https://docs.oracle.com/en/virtualization/virtualbox/7.1/user/Introduction.html",
+        "https://docs.oracle.com/en/virtualization/virtualbox/7.2/user/installation.html",
+        "https://www.virtualbox.org/wiki/Download_Old_Builds_7_1"
+      ],
+      "confirmations": [],
+      "url": "https://download.virtualbox.org/virtualbox/7.1.18/VirtualBox-7.1.18-173720-macOSArm64.dmg",
+      "sha256": "145aab47e28a7b870eb5ad1070a6176aacaca390e8bc6952ef114fa283c16a4a",
+      "variations": {
+        "big_sur": {
+          "url": "https://download.virtualbox.org/virtualbox/7.1.18/VirtualBox-7.1.18-173720-OSX.dmg",
+          "sha256": "174820ee0e3251c612439a907c3c1dac1d5e1f1c2fd27b17afdde1b400db2be5"
+        },
+        "monterey": {
+          "url": "https://download.virtualbox.org/virtualbox/7.1.18/VirtualBox-7.1.18-173720-OSX.dmg",
+          "sha256": "174820ee0e3251c612439a907c3c1dac1d5e1f1c2fd27b17afdde1b400db2be5"
+        },
+        "ventura": {
+          "url": "https://download.virtualbox.org/virtualbox/7.1.18/VirtualBox-7.1.18-173720-OSX.dmg",
+          "sha256": "174820ee0e3251c612439a907c3c1dac1d5e1f1c2fd27b17afdde1b400db2be5"
+        },
+        "sonoma": {
+          "url": "https://download.virtualbox.org/virtualbox/7.1.18/VirtualBox-7.1.18-173720-OSX.dmg",
+          "sha256": "174820ee0e3251c612439a907c3c1dac1d5e1f1c2fd27b17afdde1b400db2be5"
+        }
+      }
+    }
+  ]
+}

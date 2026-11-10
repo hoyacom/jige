@@ -31,6 +31,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -39,8 +40,17 @@ from pathlib import Path
 
 __version__ = "0.1.0"
 
+# formulae.brew.sh가 Python urllib의 기본 User-Agent("Python-urllib/3.x")를 유독
+# "Maximum threads for service reached" 503으로 많이 막는 걸 실측으로 확인함(curl이나
+# 다른 UA는 바로 통과) — 전역 opener를 바꿔두면 urlopen뿐 아니라 urlretrieve도
+# 똑같이 타게 돼서 한 군데서 고치면 모든 HTTP 호출에 적용됨.
+_opener = urllib.request.build_opener()
+_opener.addheaders = [("User-Agent", f"jige/{__version__} (+https://github.com/hoyacom/jige)")]
+urllib.request.install_opener(_opener)
+
 REPO_ROOT = Path(__file__).resolve().parent
 LOCAL_RECIPES_DIR = REPO_ROOT / "recipes"
+LOCAL_LEGACY_DIR = REPO_ROOT / "recipes" / "legacy"
 CACHE_DIR = Path.home() / "Library" / "Caches" / "jige" / "downloads"
 INDEX_CACHE_DIR = Path.home() / "Library" / "Caches" / "jige" / "index"
 INDEX_MAX_AGE_SECONDS = 24 * 3600
@@ -60,6 +70,67 @@ SOURCE_LABEL = {
     "mas": "Mac App Store",
     "local": "자체 레포지토리",
 }
+
+JIGE_REPO_SLUG = "hoyacom/jige"
+JIGE_REPO = f"https://github.com/{JIGE_REPO_SLUG}"
+JIGE_LEGACY_RAW_BASE = f"https://raw.githubusercontent.com/{JIGE_REPO_SLUG}/main/recipes/legacy"
+
+
+def github_edit_url(path: str) -> str:
+    """GitHub 자체의 '파일 수정하면 자동 fork + PR 생성' 흐름을 그대로 가리킴 —
+    커스텀 서버/DB 없이 recipes/legacy/ 기여를 쉽게 하기 위한 링크일 뿐."""
+    return f"{JIGE_REPO}/edit/main/{path}"
+
+
+def github_new_issue_url(title: str, body: str) -> str:
+    return f"{JIGE_REPO}/issues/new?" + urllib.parse.urlencode({"title": title, "body": body})
+
+
+def offer_github_contribution(title: str, body: str, fallback_edit_path: str | None = None) -> None:
+    """gh CLI(설치·로그인돼 있으면)로 터미널에서 바로 이슈를 올리게 묻고, 없거나
+    거절하면 웹에서 직접 할 수 있는 링크를 보여줌. 커스텀 서버·PR 자동화는 없음 —
+    gh도 안 되면 그냥 사람이 GitHub 웹에서 하는 것뿐."""
+    print()
+    print("--- 커뮤니티에 공유하기 (선택) ---")
+    print(title)
+    if shutil.which("gh") and sys.stdin.isatty():
+        answer = input("gh CLI로 지금 바로 이슈를 올릴까요? [y/N]: ").strip().lower()
+        if answer == "y":
+            try:
+                subprocess.run(
+                    ["gh", "issue", "create", "--repo", JIGE_REPO_SLUG,
+                     "--title", title, "--body", body],
+                    check=True,
+                )
+                return
+            except Exception as e:
+                print(f"(gh issue create 실패: {e} — 아래 링크로 직접 올려주세요)")
+    print(f"-> 이슈로 올리기: {github_new_issue_url(title, body)}")
+    if fallback_edit_path:
+        print(f"-> 또는 파일을 직접 고쳐서 PR 올리기: {github_edit_url(fallback_edit_path)}")
+
+
+def trust_badge(entry: dict) -> str:
+    """search처럼 짧게만 보여줄 때 쓰는 한 토큰짜리 신뢰 단계 표시."""
+    n = len(entry.get("confirmations") or [])
+    if n == 0:
+        return "🆕"
+    if n < 3:
+        return f"✓{n}"
+    return f"✓✓{n}"
+
+
+def trust_label(entry: dict) -> str:
+    """recipes/legacy/<token>.json의 confirmations 배열 길이로 신뢰 단계를 보여줌.
+    confirmations는 실제로 설치해본 사람들이 GitHub PR로 한 줄씩 추가하는 기록이라,
+    jige가 뭘 자동 집계하는 게 아니라 그 배열 길이 자체가 신뢰 단계임."""
+    n = len(entry.get("confirmations") or [])
+    if n == 0:
+        return "🆕 방금 등록됨 (공식 문서로 확인, 다른 사용자 확인 아직 없음)"
+    if n < 3:
+        return f"✓ 실제 설치로 확인됨 ({n}명)"
+    return f"✓✓ 여러 명이 확인함 ({n}명)"
+
 
 MACOS_CODENAME = {
     "10.15": "catalina", "11": "big_sur", "12": "monterey", "13": "ventura",
@@ -184,13 +255,16 @@ def macos_version_tuple() -> tuple[int, ...]:
     return tuple(int(p) for p in ver.split("."))
 
 
+def _pad_version_tuples(*versions: tuple[int, ...]) -> list[tuple[int, ...]]:
+    width = max(len(v) for v in versions)
+    return [v + (0,) * (width - len(v)) for v in versions]
+
+
 def meets_min_macos(min_version: str) -> bool:
     """min_version: "12" 또는 "12.0" 같은 문자열. 이 기기가 그 버전 이상인지."""
     required = tuple(int(p) for p in str(min_version).split("."))
     current = macos_version_tuple()
-    width = max(len(required), len(current))
-    required = required + (0,) * (width - len(required))
-    current = current + (0,) * (width - len(current))
+    current, required = _pad_version_tuples(current, required)
     return current >= required
 
 
@@ -199,15 +273,88 @@ def check_macos_requirement(min_version: str | None, app_label: str) -> None:
         return
     if not meets_min_macos(min_version):
         current = ".".join(str(p) for p in macos_version_tuple())
+        edit_url = github_edit_url(f"recipes/legacy/{app_label}.json")
         sys.exit(
             f"'{app_label}'는 macOS {min_version} 이상이 필요한데 이 기기는 {current}입니다.\n"
-            f"-> 설치해도 실행이 안 될 가능성이 높아 다운로드 전에 중단합니다."
+            f"-> 설치해도 실행이 안 될 가능성이 높아 다운로드 전에 중단합니다.\n"
+            f"-> 이 macOS에서도 쓸 수 있는 구버전을 공식 홈페이지 등에서 확인하셨다면,\n"
+            f"   recipes/legacy/{app_label}.json에 추가해주세요(다른 사용자들도 바로 도움받습니다): {edit_url}"
         )
 
 
 def current_os() -> str:
     system = platform.system()
     return {"Darwin": "macos", "Linux": "linux"}.get(system, system.lower())
+
+
+# ---------------------------------------------------------------------------
+# recipes/legacy/<token>.json: Homebrew-Cask의 depends_on.macos엔 없는
+# "최신판이 이 macOS를 더 이상 지원 안 함" 지식을 jige가 직접 큐레이션해두는 곳.
+# (예: VirtualBox 7.2부터 macOS 13 이상 필요 — Oracle 공식 문서 기준, cask JSON엔
+#  이 정보 자체가 없어서 자동으로 알아낼 방법이 없음.)
+# ---------------------------------------------------------------------------
+
+def load_legacy_versions(token: str) -> list[dict]:
+    """1) 이 체크아웃의 로컬 recipes/legacy/<token>.json이 있으면 그걸 그대로 씀
+    (jige 자체를 개발 중일 때처럼). 2) 없으면 GitHub의 recipes/legacy/<token>.json을
+    load_homebrew_index()와 똑같은 24시간 캐시 패턴으로 받아옴 — 그래서 누군가의 PR이
+    main에 머지되는 순간부터, jige 코드 자체를 업데이트(git pull)하지 않아도 하루 안에
+    모든 사용자에게 그 정보가 퍼짐(코드 업데이트와 데이터 갱신이 분리됨)."""
+    local_path = LOCAL_LEGACY_DIR / f"{token}.json"
+    if local_path.exists():
+        try:
+            return json.loads(local_path.read_text()).get("versions", [])
+        except json.JSONDecodeError:
+            return []
+
+    cache_dir = INDEX_CACHE_DIR / "legacy"
+    cache_path = cache_dir / f"{token}.json"
+    if not cache_path.exists() or (time.time() - cache_path.stat().st_mtime) > INDEX_MAX_AGE_SECONDS:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        url = f"{JIGE_LEGACY_RAW_BASE}/{urllib.parse.quote(token, safe='')}.json"
+        try:
+            _download_json(url, cache_path)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                # 이 토큰엔 큐레이션된 대체판이 없다는 뜻 — 정상. 그것도 캐시해둬서
+                # 매 검색마다 다시 404를 때리지 않게 함.
+                cache_path.write_text("{}")
+            elif not cache_path.exists():
+                return []
+        except Exception:
+            if not cache_path.exists():
+                return []
+
+    try:
+        return json.loads(cache_path.read_text()).get("versions", [])
+    except json.JSONDecodeError:
+        return []
+
+
+def macos_in_range(entry: dict) -> bool:
+    """이 머신의 macOS가 entry에 적힌 min_macos~max_macos 사이인지.
+    max_macos는 끝자리를 생략하면(예: "12") 그 메이저 버전 전체(12.x.y 전부)를
+    포함하는 뜻 — 0으로 패딩하면 "12"가 "12.0.0"만 가리키게 돼서 12.7.6 같은
+    실제 기기가 범위 밖으로 잘못 빠지는 경계 버그가 있었음."""
+    current = macos_version_tuple()
+    lo = tuple(int(p) for p in str(entry["min_macos"]).split("."))
+    hi = tuple(int(p) for p in str(entry["max_macos"]).split("."))
+    width = max(len(current), len(lo), len(hi))
+    current_p = current + (0,) * (width - len(current))
+    lo_p = lo + (0,) * (width - len(lo))
+    hi_p = hi + (9999,) * (width - len(hi))
+    return lo_p <= current_p <= hi_p
+
+
+def pick_legacy_for_this_mac(token: str) -> dict | None:
+    """이 머신이 쓸 수 있는데(macos_in_range) 최신판은 요구하는 macOS를
+    못 만족하는(latest_min_macos) 큐레이션 항목이 있으면 그걸 반환."""
+    if current_os() != "macos":
+        return None
+    for entry in load_legacy_versions(token):
+        if macos_in_range(entry) and not meets_min_macos(entry["latest_min_macos"]):
+            return entry
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +411,10 @@ def search_homebrew(query: str) -> list[dict]:
             desc = entry.get("desc", "")
             rank = _rank(query, token, display_name, desc)
             if rank < 999:
+                if kind == "cask" and (legacy := pick_legacy_for_this_mac(token)):
+                    tag = "EOL" if legacy.get("vendor_status") == "eol" else "OS지원한계"
+                    version = f"{legacy['version']} (최신 {version}는 macOS {legacy['latest_min_macos']}+ 필요)"
+                    desc = f"[{tag} {trust_badge(legacy)}] {desc}"
                 hits.append({
                     "name": token,
                     "version": version,
@@ -469,14 +620,23 @@ def download(url: str, dest: Path) -> None:
     tmp.rename(dest)
 
 
-def install_dmg(dmg_path: Path, app_name: str) -> Path:
-    mount_point = Path("/Volumes") / f"jige-{app_name}"
+def attach_dmg(dmg_path: Path, label: str) -> Path:
+    mount_point = Path("/Volumes") / f"jige-{label}"
     subprocess.run(["hdiutil", "detach", str(mount_point)], capture_output=True)
     subprocess.run(
         ["hdiutil", "attach", "-nobrowse", "-quiet",
          "-mountpoint", str(mount_point), str(dmg_path)],
         check=True,
     )
+    return mount_point
+
+
+def detach_dmg(mount_point: Path) -> None:
+    subprocess.run(["hdiutil", "detach", str(mount_point)], capture_output=True)
+
+
+def install_dmg(dmg_path: Path, app_name: str) -> Path:
+    mount_point = attach_dmg(dmg_path, app_name)
     try:
         src = mount_point / app_name
         if not src.exists():
@@ -491,8 +651,40 @@ def install_dmg(dmg_path: Path, app_name: str) -> Path:
         print(f"{src} -> {dest}")
         shutil.copytree(src, dest, symlinks=True)
     finally:
-        subprocess.run(["hdiutil", "detach", str(mount_point)], capture_output=True)
+        detach_dmg(mount_point)
     return dest
+
+
+def install_pkg(mount_point: Path, pkg_artifact: list) -> None:
+    """cask의 {"pkg": ["X.pkg", {"choices": [...]}]} 아티팩트를 그대로 설치.
+    .app을 /Applications에 복사하는 게 아니라 pre/postflight 스크립트가 있는
+    설치 패키지라서 installer(sudo 필요)를 그대로 호출한다."""
+    pkg_filename = pkg_artifact[0]
+    pkg_path = mount_point / pkg_filename
+    if not pkg_path.exists():
+        sys.exit(f"DMG 안에서 {pkg_filename} 을 못 찾음: {list(mount_point.iterdir())}")
+
+    choices = next(
+        (extra["choices"] for extra in pkg_artifact[1:]
+         if isinstance(extra, dict) and "choices" in extra),
+        None,
+    )
+    choices_plist: Path | None = None
+    cmd = ["sudo", "installer", "-pkg", str(pkg_path), "-target", "/"]
+    if choices:
+        fd, tmp_name = tempfile.mkstemp(suffix=".plist")
+        os.close(fd)
+        choices_plist = Path(tmp_name)
+        with open(choices_plist, "wb") as f:
+            plistlib.dump(choices, f)
+        cmd += ["-applyChoiceChangesXML", str(choices_plist)]
+
+    print("관리자 권한(sudo)이 필요합니다 — 비밀번호를 입력하세요.")
+    try:
+        subprocess.run(cmd, check=True)
+    finally:
+        if choices_plist:
+            choices_plist.unlink(missing_ok=True)
 
 
 def installed_version(app_path: Path) -> str | None:
@@ -579,7 +771,55 @@ def install_via_mas(token: str, recipe: dict) -> None:
     print(f"완료: {token} (Mac App Store, id {mas_id}, 버전 {recipe.get('version')})")
 
 
-def cmd_install(token: str, mas: bool = False) -> None:
+def resolve_version_for_this_mac(
+    token: str, recipe: dict, force_latest: bool
+) -> tuple[dict, dict | None]:
+    """recipes/legacy/<token>.json에 이 머신이 쓸 수 있는 대체판이 있고 최신판은
+    이 macOS를 지원 안 하는 걸로 큐레이션돼 있으면, 안내하고 물어본 뒤 recipe를
+    그 대체판으로 바꿔서 반환. (recipe, 실제로 쓴 legacy entry 또는 None)을 반환."""
+    legacy = pick_legacy_for_this_mac(token)
+    if not legacy or force_latest:
+        return recipe, None
+
+    latest_version = recipe.get("version")
+    current = ".".join(str(p) for p in macos_version_tuple())
+    eol_note = " (참고: Oracle 기준 더 이상 지원 안 하는 EOL 버전)" if legacy.get("vendor_status") == "eol" else ""
+    print()
+    print(f"참고: 이 Mac은 macOS {sw_vers_codename()}({current})입니다.")
+    print()
+    print(f"  최신판   {latest_version:<10} macOS {legacy['latest_min_macos']} 이상 필요 → 이 Mac에서 설치 안 될 가능성 높음")
+    print(f"  대체판   {legacy['version']:<10} macOS {legacy['min_macos']}~{legacy['max_macos']} 지원, 이 Mac에서 동작 확인됨{eol_note}")
+    print(f"           신뢰도: {trust_label(legacy)}")
+    print()
+
+    choice = ""
+    if sys.stdin.isatty():
+        choice = input("어느 걸 설치할까요? [1] 대체판(추천)  [2] 최신판(강행)  번호 [1]: ").strip()
+    else:
+        print("(비대화형 실행이라 묻지 않고 대체판을 고릅니다 — 최신판을 강행하려면 --latest)")
+
+    if choice == "2":
+        return recipe, None
+
+    merged = dict(recipe)
+    merged["version"] = legacy["version"]
+    merged["url"] = legacy["url"]
+    merged["sha256"] = legacy["sha256"]
+    merged["variations"] = legacy.get("variations", {})
+    # 최신판의 depends_on.macos는 대체판엔 안 맞음 — macos_in_range()로 이미
+    # 이 머신이 대체판 범위에 맞는 걸 확인했으니 여기서 지워서 이중 체크 안 함
+    # (안 지우면 대체판으로 바꿔놓고도 최신판 기준 macOS 요구치로 다시 막혀버림)
+    merged["depends_on"] = {}
+    if legacy.get("app"):
+        # 구버전은 .app 번들 이름 자체가 다를 수 있음 (예: Audacity.app -> 최신판 Audacity 4.app)
+        merged["artifacts"] = [
+            {**a, "app": [legacy["app"]]} if "app" in a else a
+            for a in merged.get("artifacts", [])
+        ]
+    return merged, legacy
+
+
+def cmd_install(token: str, mas: bool = False, latest: bool = False) -> None:
     codename = sw_vers_codename()
     cpu = arch()
     print(f"macOS 코드네임: {codename} / 아키텍처: {cpu}")
@@ -590,6 +830,9 @@ def cmd_install(token: str, mas: bool = False) -> None:
     if "_mas_id" in recipe:
         install_via_mas(token, recipe)
         return
+
+    latest_version = recipe.get("version")  # 대체판으로 바뀌기 전 버전 — list에 "최신은 X" 표시용
+    recipe, legacy_used = resolve_version_for_this_mac(token, recipe, force_latest=latest)
 
     macos_min = (recipe.get("depends_on") or {}).get("macos", {}).get(">=")
     if macos_min:
@@ -612,23 +855,69 @@ def cmd_install(token: str, mas: bool = False) -> None:
     app_artifact = next(
         (a["app"][0] for a in recipe.get("artifacts", []) if "app" in a), None
     )
-    if not app_artifact:
-        sys.exit("레시피에 .app 아티팩트가 없음 (dmg가 아닌 다른 설치방식일 수 있음, 아직 미지원)")
+    pkg_artifact = next(
+        (a["pkg"] for a in recipe.get("artifacts", []) if "pkg" in a), None
+    )
 
-    before = installed_version(Path("/Applications") / app_artifact)
-    installed_path = install_dmg(dmg_path, app_artifact)
-    after = installed_version(installed_path)
+    if app_artifact:
+        before = installed_version(Path("/Applications") / app_artifact)
+        installed_path = install_dmg(dmg_path, app_artifact)
+        after = installed_version(installed_path)
+        app_label = installed_path.name  # 레거시판은 .app 번들 이름이 다를 수 있어 실제 설치된 이름을 씀
+    elif pkg_artifact:
+        before = None  # .pkg는 설치 전/후 버전을 안정적으로 추적하기 어려워 범위 밖
+        mount_point = attach_dmg(dmg_path, token)
+        try:
+            install_pkg(mount_point, pkg_artifact)
+        finally:
+            detach_dmg(mount_point)
+        after = recipe.get("version")
+        name = recipe.get("name")
+        app_label = name[0] if isinstance(name, list) else (name or token)
+    else:
+        print("레시피에 .app/.pkg 아티팩트가 없음 (아직 미지원 설치 방식)")
+        offer_github_contribution(
+            f"{token}: .app/.pkg 둘 다 아닌 설치 방식",
+            f"토큰: {token}\nmacOS: {codename} ({'.'.join(str(p) for p in macos_version_tuple())})\n"
+            f"아키텍처: {cpu}\n레시피 버전: {recipe.get('version')}\n"
+            f"공식 홈페이지: {recipe.get('homepage', '?')}\n",
+        )
+        sys.exit(1)
 
     state = load_state()
     state[token] = {
-        "app": app_artifact,
+        "app": app_label,
         "version": after,
         "installed_at": datetime.datetime.now().isoformat(timespec="seconds"),
     }
+    if legacy_used:
+        # macOS 호환 때문에 일부러 구버전으로 깐 것 — list에서도 이 사실이 남아있어야
+        # "지금 구버전만 보임, 최신판이 있다는 걸 몰랐음" 같은 상황이 안 생김.
+        # macOS를 업그레이드하면 'jige upgrade'가 이 머신을 다시 확인해서 자동으로
+        # 최신판으로 바꿔줌(resolve_version_for_this_mac이 그때는 legacy를 안 고름).
+        state[token]["legacy"] = True
+        state[token]["latest_version"] = latest_version
+        state[token]["latest_min_macos"] = legacy_used["latest_min_macos"]
     save_state(state)
 
     print()
-    print(f"완료: {app_artifact}  {before or '(미설치)'} -> {after}")
+    print(f"완료: {app_label}  {before or '(미설치)'} -> {after}")
+
+    if legacy_used:
+        confirmation = {
+            "date": datetime.date.today().isoformat(),
+            "macos": ".".join(str(p) for p in macos_version_tuple()),
+            "arch": cpu,
+            "note": "실제 설치 성공",
+        }
+        print(f"이 대체판({legacy_used['version']})이 이 Mac({codename})에서 설치됐습니다.")
+        print(f"현재 신뢰도: {trust_label(legacy_used)} — 확인 기록 하나 추가해주시면 도움이 됩니다.")
+        offer_github_contribution(
+            f"confirm: {token} {legacy_used['version']} on macOS {codename}",
+            f"recipes/legacy/{token}.json의 confirmations 배열에 아래 한 줄 추가해주세요:\n\n"
+            f"{json.dumps(confirmation, ensure_ascii=False, indent=2)}\n",
+            fallback_edit_path=f"recipes/legacy/{token}.json",
+        )
 
 
 def cmd_info(token: str) -> None:
@@ -652,8 +941,20 @@ def cmd_list() -> None:
     name_w = max(4, max(len(k) for k in state))
     print(f"{'이름':<{name_w}}  {'버전':<14}  설치 시각")
     print("-" * (name_w + 14 + 24))
+    any_legacy = False
     for token, info in state.items():
-        print(f"{token:<{name_w}}  {info.get('version', '?'):<14}  {info.get('installed_at', '?')}")
+        version_display = info.get("version", "?")
+        if info.get("legacy"):
+            any_legacy = True
+            version_display += (
+                f" (대체판, 최신 {info.get('latest_version', '?')}는 "
+                f"macOS {info.get('latest_min_macos', '?')}+ 필요)"
+            )
+        print(f"{token:<{name_w}}  {version_display:<14}  {info.get('installed_at', '?')}")
+    if any_legacy:
+        print()
+        print("(대체판)으로 설치된 게 있습니다 — macOS를 그 버전 이상으로 올리면 'jige upgrade'로")
+        print("최신판을 받을 수 있습니다 (그 전엔 upgrade해도 같은 대체판이 다시 깔립니다).")
 
 
 def move_to_trash(path: Path) -> Path:
@@ -730,9 +1031,9 @@ def cmd_update() -> None:
         print(f"jige 갱신됨: {before} -> {after}")
 
 
-def cmd_upgrade(token: str | None) -> None:
+def cmd_upgrade(token: str | None, latest: bool = False) -> None:
     if token:
-        cmd_install(token)
+        cmd_install(token, latest=latest)
         return
     state = load_state()
     if not state:
@@ -741,7 +1042,7 @@ def cmd_upgrade(token: str | None) -> None:
     for t in list(state.keys()):
         print(f"--- {t} ---")
         try:
-            cmd_install(t)
+            cmd_install(t, latest=latest)
         except SystemExit as e:
             print(f"{t} 업그레이드 실패(건너뜀): {e}")
         print()
@@ -759,6 +1060,10 @@ def main() -> None:
     p_install.add_argument(
         "--mas", action="store_true",
         help="이번 한 번만 Mac App Store도 뒤짐 ('jige config mas on' 없이 일회성으로 켜는 옵션)"
+    )
+    p_install.add_argument(
+        "--latest", action="store_true",
+        help="이 macOS에 안 맞을 수 있어도 묻지 않고 최신판으로 강행 (recipes/legacy/ 큐레이션 무시)"
     )
 
     p_search = sub.add_parser("search", help=t("help_search"))
@@ -784,6 +1089,10 @@ def main() -> None:
 
     p_upgrade = sub.add_parser("upgrade", help=t("help_upgrade"))
     p_upgrade.add_argument("token", nargs="?", default=None, help="생략하면 설치된 전체 업그레이드")
+    p_upgrade.add_argument(
+        "--latest", action="store_true",
+        help="이 macOS에 안 맞을 수 있어도 묻지 않고 최신판으로 강행 (recipes/legacy/ 큐레이션 무시)"
+    )
 
     sub.add_parser("update", help=t("help_update"))
 
@@ -793,7 +1102,7 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.command == "install":
-        cmd_install(args.token, mas=args.mas)
+        cmd_install(args.token, mas=args.mas, latest=args.latest)
     elif args.command == "search":
         cmd_search(args.query, mas=args.mas)
     elif args.command == "config":
@@ -805,7 +1114,7 @@ def main() -> None:
     elif args.command in ("list", "installed"):
         cmd_list()
     elif args.command == "upgrade":
-        cmd_upgrade(args.token)
+        cmd_upgrade(args.token, latest=args.latest)
     elif args.command == "update":
         cmd_update()
 
