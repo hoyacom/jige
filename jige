@@ -78,6 +78,32 @@ def arch() -> str:
     return subprocess.check_output(["uname", "-m"], text=True).strip()
 
 
+def macos_version_tuple() -> tuple[int, ...]:
+    ver = subprocess.check_output(["sw_vers", "-productVersion"], text=True).strip()
+    return tuple(int(p) for p in ver.split("."))
+
+
+def meets_min_macos(min_version: str) -> bool:
+    """min_version: "12" 또는 "12.0" 같은 문자열. 이 기기가 그 버전 이상인지."""
+    required = tuple(int(p) for p in str(min_version).split("."))
+    current = macos_version_tuple()
+    width = max(len(required), len(current))
+    required = required + (0,) * (width - len(required))
+    current = current + (0,) * (width - len(current))
+    return current >= required
+
+
+def check_macos_requirement(min_version: str | None, app_label: str) -> None:
+    if not min_version or current_os() != "macos":
+        return
+    if not meets_min_macos(min_version):
+        current = ".".join(str(p) for p in macos_version_tuple())
+        sys.exit(
+            f"'{app_label}'는 macOS {min_version} 이상이 필요한데 이 기기는 {current}입니다.\n"
+            f"-> 설치해도 실행이 안 될 가능성이 높아 다운로드 전에 중단합니다."
+        )
+
+
 def current_os() -> str:
     system = platform.system()
     return {"Darwin": "macos", "Linux": "linux"}.get(system, system.lower())
@@ -277,6 +303,7 @@ def fetch_mas_recipe(token: str) -> dict | None:
                 "homepage": entry.get("trackViewUrl"),
                 "desc": entry.get("sellerName", ""),
                 "_mas_id": entry["trackId"],
+                "_min_macos": entry.get("minimumOsVersion"),
             }
     return None
 
@@ -384,8 +411,13 @@ def save_state(state: dict) -> None:
 def install_via_mas(token: str, recipe: dict) -> None:
     """mas install <id>를 그대로 호출. 실제 다운로드·인증은 로그인된 App Store 세션이 처리."""
     mas_id = recipe["_mas_id"]
+    check_macos_requirement(recipe.get("_min_macos"), token)
     if not shutil.which("mas"):
-        sys.exit("mas CLI가 없어서 Mac App Store 앱은 설치 못 함 (brew/macports로 mas 설치 필요)")
+        sys.exit(
+            "mas CLI가 없어서 Mac App Store 앱은 설치 못 함.\n"
+            "-> https://github.com/mas-cli/mas/releases 에서 이 macOS와 맞는 버전을 받으세요\n"
+            "   (최신판이 너무 새 Xcode를 요구해 구버전 macOS에선 설치가 안 될 수 있음 — 이 프로젝트에서 iMac이 그랬음)."
+        )
     print(f"mas install {mas_id} 실행 중...")
     subprocess.run(["mas", "install", str(mas_id)], check=True)
 
@@ -410,6 +442,10 @@ def cmd_install(token: str) -> None:
     if "_mas_id" in recipe:
         install_via_mas(token, recipe)
         return
+
+    macos_min = (recipe.get("depends_on") or {}).get("macos", {}).get(">=")
+    if macos_min:
+        check_macos_requirement(macos_min[0], token)
 
     url, sha = pick_url_sha(recipe, cpu, codename)
     print(f"선택된 다운로드: {url}")
