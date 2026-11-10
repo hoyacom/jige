@@ -774,11 +774,11 @@ def fetch_recipe(token: str, allow_mas: bool = False) -> tuple[dict, str]:
 def pick_url_sha(recipe: dict, cpu: str, codename: str) -> tuple[str, str]:
     if cpu == "arm64":
         return recipe["url"], recipe["sha256"]
-    variations = recipe.get("variations") or {}
-    v = variations.get(codename)
-    if v:
-        return v["url"], v["sha256"]
-    return recipe["url"], recipe["sha256"]  # Intel 전용 override가 없으면 기본값
+    # Homebrew-Cask의 variations는 기본값과 "다른 필드만" 적어두는 희소(sparse) override라서
+    # (예: vagrant는 url만 arch별로 다르고 sha256은 공통이라 variation에 url만 있음) 없는
+    # 필드는 반드시 레시피 기본값으로 메꿔야 함 — 통째로 가정하면 KeyError 남(실제로 겪음).
+    v = (recipe.get("variations") or {}).get(codename) or {}
+    return v.get("url", recipe["url"]), v.get("sha256", recipe["sha256"])
 
 
 def sha256_of(path: Path) -> str:
