@@ -183,11 +183,11 @@ STRINGS = {
         "ja": "'{q}' の検索結果なし(Homebrew / MacPorts / ローカルリポジトリすべて)。",
     },
     "install_hint": {
-        # 터미널이 좁아도 예측 못 한 중간 지점에서 꺾이지 않도록 줄바꿈을 직접 넣음
-        # (한 줄로 두면 좁은 터미널에서 아무 데서나 wrap돼서 보기 안 좋았음)
-        "ko": "설치: jige install <이름>\n      (Homebrew(Cask) 항목은 지금 바로 설치 지원 — 나머지는 다음 단계에서 연결)",
-        "en": "Install: jige install <name>\n         (Homebrew Cask entries install now — the rest are wired up next)",
-        "ja": "インストール: jige install <名前>\n           (Homebrew(Cask)は今すぐ対応 — 残りは今後対応予定)",
+        # 터미널이 좁아도 예측 못 한 중간 지점에서 꺾이지 않도록 줄바꿈을 직접 넣고,
+        # 내용도 짧게 줄임(80컬럼 터미널에서도 여유 있게 들어가도록)
+        "ko": "설치: jige install <이름>\n      (Homebrew Cask는 지금 설치 가능, 나머지는 추후 지원)",
+        "en": "Install: jige install <name>\n         (Homebrew Cask installs now, the rest comes later)",
+        "ja": "インストール: jige install <名前>\n           (Homebrew Caskは今すぐ対応、残りは今後対応)",
     },
     "app_description": {
         "ko": "brew 없이도 Homebrew·MacPorts·Mac App Store 공개 레시피를 읽어서 이 기기에 맞는 앱을 찾아 설치",
@@ -627,10 +627,12 @@ def cmd_search(query: str, limit_per_source: int = 8, mas: bool = False) -> None
     version_w = max(_display_width(t("col_version")), max(_display_width(v) for v in display_versions))
 
     # desc 칸은 터미널 실제 가로폭에 맞춰서 자름 — 고정폭으로 하면 좁은 터미널에서 줄이
-    # 꺾여서 다음 줄의 칸 정렬까지 같이 깨짐.
+    # 꺾여서 다음 줄의 칸 정렬까지 같이 깨짐. 끝에서 2칸은 여유로 남겨둠 — "…" 같은 문자는
+    # 유니코드 표준상 "폭 모호(Ambiguous)"라 한글 로케일 터미널에서 실제로는 2칸을 쓰는
+    # 경우가 많아서(_display_width는 1칸으로 계산), 꽉 채우면 1~2칸 넘쳐서 줄바꿈이 생김.
     prefix_w = name_w + 2 + kind_w + 2 + source_w + 2 + version_w + 2
     term_width = shutil.get_terminal_size(fallback=(100, 24)).columns
-    desc_budget = max(20, term_width - prefix_w)
+    desc_budget = max(20, term_width - prefix_w - 2)
 
     print(
         f"{_pad(t('col_name'), name_w)}  {_pad(t('col_kind'), kind_w)}  "
