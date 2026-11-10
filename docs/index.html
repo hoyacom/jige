@@ -88,6 +88,7 @@
     background:var(--bg-alt); border:1px solid var(--line); border-radius:14px;
     padding:24px;
   }
+  .concept-icon{width:44px; height:44px; margin-bottom:10px;}
   .concept-card .word{font-family:var(--mono); font-weight:700; font-size:22px; color:var(--brand);}
   .concept-card .ko{color:var(--ink-soft); font-size:14px; margin-bottom:10px;}
   .concept-card .maps{margin-top:14px; font-size:13px; color:var(--ink-soft);}
@@ -182,12 +183,24 @@
 
     <div class="concept-grid">
       <div class="concept-card">
+        <svg class="concept-icon" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- jim: 보따리(묶은 짐 꾸러미) -->
+          <path d="M24 6 L24 14" stroke="#b5541e" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="24" cy="5" r="2.6" fill="#b5541e"/>
+          <path d="M9 18 Q24 8 39 18 L35 38 Q24 44 13 38 Z" fill="#e8a85c" stroke="#b5541e" stroke-width="2.5" stroke-linejoin="round"/>
+          <path d="M14 20 Q24 28 34 20" stroke="#8a3e14" stroke-width="2" fill="none" stroke-linecap="round"/>
+        </svg>
         <div class="word">jim</div>
         <div class="ko">짐 — 지게에 통째로 얹는 짐</div>
         Dock·런처에 아이콘이 생기는 GUI 앱.
         <div class="maps">대응: Homebrew의 <b>cask</b></div>
       </div>
       <div class="concept-card">
+        <svg class="concept-icon" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- dogu: 스패너(연장) -->
+          <path d="M31 10a7 7 0 0 0-9.5 8.5L10 30l3 3 3 3 11.5-11.5A7 7 0 0 0 36 17" stroke="#2f6f5e" stroke-width="3" fill="#bfe0d6" stroke-linejoin="round" stroke-linecap="round"/>
+          <circle cx="14" cy="34" r="2" fill="#2f6f5e"/>
+        </svg>
         <div class="word">dogu</div>
         <div class="ko">도구 — 지게꾼이 손에 쥐고 바로 쓰는 연장</div>
         터미널에서 직접 쓰는 명령·라이브러리.
