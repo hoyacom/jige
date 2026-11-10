@@ -51,8 +51,9 @@ MACPORTS_SEARCH_API = "https://ports.macports.org/api/v1/ports/"
 ITUNES_SEARCH_API = "https://itunes.apple.com/search"  # mas가 내부적으로 쓰는 것과 같은 공개 API
 
 SOURCE_LABEL = {
-    "homebrew-cask": "Homebrew(Cask)",
-    "homebrew-formula": "Homebrew(CLI)",
+    # jim/dogu(종류) 컬럼이 이미 Cask/CLI 구분을 보여주므로 여기서 또 반복 안 함
+    "homebrew-cask": "Homebrew",
+    "homebrew-formula": "Homebrew",
     "macports": "MacPorts",
     "mas": "Mac App Store",
     "local": "자체 레포지토리",
