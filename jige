@@ -12,10 +12,16 @@ brew가 없는 기기(예: MacPorts만 쓰는 Mac)에서도 Homebrew-Cask의 공
 Homebrew-Cask에 레시피가 없는 앱은 ./recipes/<token>.json 에 같은 스키마로
 직접 추가해서 쓴다(NAS 등 어디에 올려두고 URL만 바꿔도 동작 — 포맷이 같아서
 아래 로직을 그대로 재사용한다).
+
+Copyright (C) 2026 Hoya Shin
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License v3 as published by the
+Free Software Foundation. See the LICENSE file for the full text.
 """
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import platform
@@ -35,6 +41,7 @@ LOCAL_RECIPES_DIR = REPO_ROOT / "recipes"
 CACHE_DIR = Path.home() / "Library" / "Caches" / "jige" / "downloads"
 INDEX_CACHE_DIR = Path.home() / "Library" / "Caches" / "jige" / "index"
 INDEX_MAX_AGE_SECONDS = 24 * 3600
+STATE_FILE = Path.home() / "Library" / "Application Support" / "jige" / "installed.json"
 
 HOMEBREW_CASK_API = "https://formulae.brew.sh/api/cask/{token}.json"
 HOMEBREW_BULK_API = "https://formulae.brew.sh/api/{kind}.json"  # kind: cask | formula
@@ -130,6 +137,7 @@ def search_homebrew(query: str) -> list[dict]:
                     "version": version,
                     "desc": desc,
                     "source": source,
+                    "kind": "jim" if kind == "cask" else "dogu",  # jim(짐)=데스크톱 앱, dogu(도구)=CLI
                     "rank": rank,
                 })
     return hits
@@ -156,6 +164,7 @@ def search_macports(query: str) -> list[dict]:
             "version": entry.get("version", "?"),
             "desc": desc,
             "source": "macports",
+            "kind": "unknown",  # TODO: 포트파일 상세조회(app_dir 등)로 jim/dogu 구분 보강
             "rank": rank,
         })
     return hits
@@ -180,6 +189,7 @@ def search_local_recipes(query: str) -> list[dict]:
                 "version": entry.get("version", "?"),
                 "desc": desc,
                 "source": "local",
+                "kind": entry.get("kind", "unknown"),  # 레시피에 직접 적어두면 됨: "jim"(데스크톱 앱) | "dogu"(CLI)
                 "rank": rank,
             })
     return hits
@@ -202,11 +212,11 @@ def cmd_search(query: str, limit_per_source: int = 8) -> None:
     rows.sort(key=lambda h: h["rank"])
 
     name_w = max(4, min(28, max(len(h["name"]) for h in rows)))
-    print(f"{'이름':<{name_w}}  {'분류':<16}  {'버전':<12}  설명")
-    print("-" * (name_w + 16 + 12 + 40))
+    print(f"{'이름':<{name_w}}  {'종류':<8}  {'분류':<16}  {'버전':<12}  설명")
+    print("-" * (name_w + 8 + 16 + 12 + 40))
     for h in rows:
         desc = (h["desc"] or "")[:60]
-        print(f"{h['name']:<{name_w}}  {SOURCE_LABEL[h['source']]:<16}  {h['version']:<12}  {desc}")
+        print(f"{h['name']:<{name_w}}  {h['kind']:<8}  {SOURCE_LABEL[h['source']]:<16}  {h['version']:<12}  {desc}")
 
     print()
     print("설치: jige install <이름>  (Homebrew(Cask) 항목만 지금 바로 자동 설치 지원 — 나머지는 다음 단계에서 연결)")
@@ -293,6 +303,20 @@ def installed_version(app_path: Path) -> str | None:
         return plistlib.load(f).get("CFBundleShortVersionString")
 
 
+def load_state() -> dict:
+    if not STATE_FILE.exists():
+        return {}
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except json.JSONDecodeError:
+        return {}
+
+
+def save_state(state: dict) -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2))
+
+
 def cmd_install(token: str) -> None:
     codename = sw_vers_codename()
     cpu = arch()
@@ -325,25 +349,128 @@ def cmd_install(token: str) -> None:
     installed_path = install_dmg(dmg_path, app_artifact)
     after = installed_version(installed_path)
 
+    state = load_state()
+    state[token] = {
+        "app": app_artifact,
+        "version": after,
+        "installed_at": datetime.datetime.now().isoformat(timespec="seconds"),
+    }
+    save_state(state)
+
     print()
     print(f"완료: {app_artifact}  {before or '(미설치)'} -> {after}")
 
 
+def cmd_info(token: str) -> None:
+    recipe, source = fetch_recipe(token)
+    name = recipe.get("name")
+    name = name[0] if isinstance(name, list) else name
+    print(f"이름       : {name or token}")
+    print(f"출처       : {source}")
+    print(f"버전       : {recipe.get('version', '?')}")
+    if recipe.get("homepage"):
+        print(f"홈페이지   : {recipe['homepage']}")
+    if recipe.get("desc"):
+        print(f"설명       : {recipe['desc']}")
+
+
+def cmd_list() -> None:
+    state = load_state()
+    if not state:
+        print("jige로 설치한 게 아직 없습니다.")
+        return
+    name_w = max(4, max(len(k) for k in state))
+    print(f"{'이름':<{name_w}}  {'버전':<14}  설치 시각")
+    print("-" * (name_w + 14 + 24))
+    for token, info in state.items():
+        print(f"{token:<{name_w}}  {info.get('version', '?'):<14}  {info.get('installed_at', '?')}")
+
+
+def cmd_uninstall(token: str) -> None:
+    state = load_state()
+    app_name = (state.get(token) or {}).get("app")
+    if not app_name:
+        # jige로 추적 안 된 설치본이어도, 레시피에서 앱 이름을 추론해 시도
+        recipe, _ = fetch_recipe(token)
+        app_name = next(
+            (a["app"][0] for a in recipe.get("artifacts", []) if "app" in a), None
+        )
+    if not app_name:
+        sys.exit(f"'{token}'의 앱 이름을 찾을 수 없음 — 수동으로 /Applications에서 지워야 함")
+
+    app_path = Path("/Applications") / app_name
+    if not app_path.exists():
+        print(f"{app_path} 가 이미 없습니다.")
+    else:
+        trash = Path.home() / ".Trash"
+        trash.mkdir(exist_ok=True)
+        dest = trash / app_name
+        if dest.exists():
+            dest = trash / f"{app_path.stem}-{int(time.time())}{app_path.suffix}"
+        shutil.move(str(app_path), str(dest))
+        print(f"{app_path} -> 휴지통({dest})")
+
+    if token in state:
+        del state[token]
+        save_state(state)
+    print(f"완료: {token} 제거(휴지통행, 영구삭제 아님)")
+
+
+def cmd_upgrade(token: str | None) -> None:
+    if token:
+        cmd_install(token)
+        return
+    state = load_state()
+    if not state:
+        print("jige로 설치한 게 없어서 업그레이드할 대상이 없습니다.")
+        return
+    for t in list(state.keys()):
+        print(f"--- {t} ---")
+        try:
+            cmd_install(t)
+        except SystemExit as e:
+            print(f"{t} 업그레이드 실패(건너뜀): {e}")
+        print()
+
+
 def main() -> None:
+    # 명령어 이름은 brew/port 둘 다 쓰는 것과 그대로 맞춤
+    # (install/search/info/upgrade 공통, uninstall엔 brew의 remove, list엔 port의 installed를 별칭으로 추가)
     parser = argparse.ArgumentParser(prog="jige", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_install = sub.add_parser("install", help="앱 설치/업데이트")
-    p_install.add_argument("token", help="Homebrew-Cask 토큰 (예: hop)")
+    p_install = sub.add_parser("install", help="앱 설치/업데이트 (brew install / port install)")
+    p_install.add_argument("token")
 
-    p_search = sub.add_parser("search", help="Homebrew/MacPorts/자체 레포지토리에서 통합 검색")
-    p_search.add_argument("query", help="검색어")
+    p_search = sub.add_parser("search", help="통합 검색 (brew search / port search)")
+    p_search.add_argument("query")
+
+    p_info = sub.add_parser("info", help="상세 정보, 설치 안 함 (brew info / port info)")
+    p_info.add_argument("token")
+
+    p_uninstall = sub.add_parser(
+        "uninstall", aliases=["remove"], help="제거, 휴지통행 (brew uninstall/remove)"
+    )
+    p_uninstall.add_argument("token")
+
+    sub.add_parser("list", aliases=["installed"], help="jige로 설치한 목록 (brew list / port installed)")
+
+    p_upgrade = sub.add_parser("upgrade", help="최신판으로 재설치 (brew upgrade / port upgrade)")
+    p_upgrade.add_argument("token", nargs="?", default=None, help="생략하면 설치된 전체 업그레이드")
 
     args = parser.parse_args()
     if args.command == "install":
         cmd_install(args.token)
     elif args.command == "search":
         cmd_search(args.query)
+    elif args.command == "info":
+        cmd_info(args.token)
+    elif args.command in ("uninstall", "remove"):
+        cmd_uninstall(args.token)
+    elif args.command in ("list", "installed"):
+        cmd_list()
+    elif args.command == "upgrade":
+        cmd_upgrade(args.token)
 
 
 if __name__ == "__main__":
