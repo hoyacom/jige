@@ -136,8 +136,11 @@
 <body>
 
 <nav class="lang-switch">
-  <a href="../">EN</a> · <a href="../ko/">한국어</a> · <span class="current">日本語</span>
+  <a href="../" onclick="try{localStorage.setItem('jige_lang','en')}catch(e){}">EN</a> ·
+  <a href="../ko/" onclick="try{localStorage.setItem('jige_lang','ko')}catch(e){}">한국어</a> ·
+  <span class="current">日本語</span>
 </nav>
+<script>try{localStorage.setItem('jige_lang','ja')}catch(e){}</script>
 
 <header class="hero">
   <div class="wrap">

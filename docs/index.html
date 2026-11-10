@@ -137,8 +137,23 @@
 <body>
 
 <nav class="lang-switch">
-  <span class="current">EN</span> · <a href="ko/">한국어</a> · <a href="ja/">日本語</a>
+  <span class="current">EN</span> ·
+  <a href="ko/" onclick="try{localStorage.setItem('jige_lang','ko')}catch(e){}">한국어</a> ·
+  <a href="ja/" onclick="try{localStorage.setItem('jige_lang','ja')}catch(e){}">日本語</a>
 </nav>
+<script>
+(function(){
+  try {
+    if (localStorage.getItem('jige_lang')) return; // 이미 한 번 고른 적 있으면 자동이동 안 함
+    var lang = (navigator.language || '').toLowerCase();
+    var target = lang.startsWith('ko') ? 'ko/' : lang.startsWith('ja') ? 'ja/' : null;
+    if (target) {
+      localStorage.setItem('jige_lang', target.slice(0, 2));
+      location.replace(target);
+    }
+  } catch (e) {}
+})();
+</script>
 
 <header class="hero">
   <div class="wrap">
