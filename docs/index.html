@@ -3,8 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>jige — brew 없이도, port 없이도</title>
-<meta name="description" content="Homebrew/MacPorts의 공개 레시피를 그대로 읽어서 Mac·Linux에 맞는 앱을 찾아 설치하는 작은 도구.">
+<title>jige — a package manager for Macs Homebrew left behind</title>
+<meta name="description" content="Homebrew가 더 이상 지원하지 않는 오래된 macOS(Monterey 등)에서도 쓸 수 있는 패키지 관리자. Homebrew·MacPorts 공개 레시피를 그대로 읽어서 이 기기에 맞는 앱을 찾아 설치합니다. A package manager for old Macs Homebrew dropped support for.">
+<meta name="keywords" content="homebrew alternative, old mac package manager, homebrew unsupported macOS, macports, brew for monterey, legacy mac homebrew, 오래된 맥 패키지 관리자, homebrew 지원 종료">
+<meta property="og:type" content="website">
+<meta property="og:title" content="jige — a package manager for Macs Homebrew left behind">
+<meta property="og:description" content="Homebrew가 더 이상 지원하지 않는 오래된 Mac을 위한 패키지 관리자. brew/MacPorts 레시피를 그대로 읽어서 설치합니다.">
+<meta property="og:url" content="https://hoyacom.github.io/jige/">
+<meta name="twitter:card" content="summary">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%23b5541e%22/><text x=%2250%22 y=%2268%22 font-size=%2258%22 text-anchor=%22middle%22 fill=%22white%22 font-family=%22Georgia,serif%22>지</text></svg>">
 <style>
   :root{
@@ -50,7 +56,9 @@
   .jige-mark{width:120px; height:120px; margin:0 auto 20px;}
   h1{font-size:56px; margin:0 0 4px; letter-spacing:-0.02em;}
   h1 .hangul{color:var(--brand); font-weight:800;}
-  .tagline{font-size:20px; color:var(--ink-soft); margin:0 0 36px;}
+  .tagline{font-size:20px; color:var(--ink-soft); margin:0 0 10px;}
+  .eyebrow{font-size:14px; color:var(--brand-dark); margin:0 0 30px; line-height:1.7;}
+  .eyebrow .en{color:var(--ink-soft); font-style:italic;}
 
   .install-box{
     display:inline-flex; align-items:center; gap:14px;
@@ -132,6 +140,8 @@
     </svg>
     <h1><span class="hangul">지게</span> jige</h1>
     <p class="tagline">brew 없이도, port 없이도 — 이 기기에 맞는 앱을 찾아서 날라다 설치</p>
+    <p class="eyebrow">Homebrew가 더 이상 지원하지 않는 오래된 Mac을 위한 패키지 관리자<br>
+    <span class="en">A package manager for old Macs that Homebrew dropped support for — Monterey and earlier, still covered.</span></p>
 
     <div class="install-box">
       <span class="prompt">$</span>
@@ -141,6 +151,24 @@
     <p class="sub-install">새 Mac이어도 상관없습니다 — Homebrew도 MacPorts도 설치돼 있을 필요 없습니다.</p>
   </div>
 </header>
+
+<section>
+  <div class="wrap">
+    <h2>Homebrew가 더 이상 지원하지 않는 Mac을 위해</h2>
+    <p class="lead">
+    <code>brew doctor</code>를 돌리면 "Your Mac OS is too old" 같은 경고가 뜨고,
+    <code>brew install</code>이 구버전 macOS(Monterey, Big Sur, Catalina…)에서
+    더 이상 bottle을 안 받아줄 때가 있습니다. Apple Silicon이 아닌 오래된 Intel Mac,
+    2015년식 iMac처럼 더 이상 공식 지원 목록에 없는 기기도 마찬가지입니다.
+    jige는 이런 기기에서도 — Homebrew를 설치하지 않고도 — Homebrew·MacPorts가
+    공개해둔 레시피를 그대로 읽어서 이 기기에 맞는 버전을 찾아 설치합니다.</p>
+    <p class="lead" style="font-style:italic; color:var(--ink-soft)">
+    If <code>brew</code> refuses to run on your old macOS (Monterey, Big Sur, or earlier)
+    or your unsupported Intel Mac, jige reads Homebrew's and MacPorts' own public recipe
+    data over plain HTTP — no Homebrew installation required — and installs the right
+    build for your exact OS and architecture.</p>
+  </div>
+</section>
 
 <section>
   <div class="wrap">
