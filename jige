@@ -650,37 +650,42 @@ def cmd_search(query: str, limit_per_source: int = 8, mas: bool = False) -> None
 
     # 종류는 jim/dogu 텍스트 대신 아이콘, 분류는 Homebrew/MacPorts 대신 실제 명령어 이름
     # (brew/port/mas) — 둘 다 짧아지는 김에 칸도 실제 값 기준으로 동적 계산.
-    # ★(이미 설치됨)/▼+신뢰도(이 macOS용 대체판 — 상세는 jige info)는 버전 바로 앞에 공백 없이
-    # 딱 붙임 — 버전은 항상 숫자로 시작해서 "*0.5.1"이 다른 버전으로 오인될 일이 없으니,
-    # 그 정도 구분이면 충분하고 마커 때문에 버전 시작 위치가 행마다 조금씩 달라도 괜찮다는
-    # 피드백(전용 칸을 따로 빼는 것보다 이쪽이 더 간결함).
+    # ★(이미 설치됨)/▼+신뢰도(이 macOS용 대체판 — 상세는 jige info)는 분류-버전 사이의
+    # 기본 간격(2칸) "안에" 끼워 넣음 — 마커가 있으면 그 폭만큼 앞 공백을 줄여서
+    # (없으면 "  ", *면 " *") 총 폭은 그대로 2칸 유지 → 마커가 있든 없든 버전 숫자가
+    # 항상 같은 자리에서 시작함(피드백: 전용 칸보다 이쪽이 "공간 절약"도 되고 더 자연스러움).
+    # 설치 마커는 ★ 대신 그냥 "*" — 버전은 항상 숫자라 헷갈릴 일 없고, 폭이 항상 정확히
+    # 1칸이라(★처럼 폭 모호하지 않음) 위 계산이 흔들림 없이 들어맞음.
     # desc엔 더 이상 아무것도 안 욱여넣음 — 폭 제약 없는 맨 끝 칸이라도 너무 길어지면
     # 읽기 힘들다는 피드백이 있었어서, 마커만 보고 필요하면 jige info로 넘어가게 함.
+    GAP = 2
     icons = [kind_icon(h["kind"]) for h in rows]
     sources = [SOURCE_LABEL.get(h["source"], h["source"]) for h in rows]
-    version_fields = []
+    versions = [simplify_version_for_display(h["version"]) for h in rows]
+    markers = []
     any_star = False
     any_legacy = False
     for h in rows:
         marker = ""
         if h["name"] in installed:
-            marker += _sym("★", "*")
+            marker += "*"
             any_star = True
         legacy = h.get("legacy")
         if legacy:
             marker += _sym("▼", "v") + trust_badge(legacy)
             any_legacy = True
-        v = simplify_version_for_display(h["version"])
-        version_fields.append(marker + v)
+        markers.append(marker)
 
     name_w = max(4, min(28, max(_display_width(h["name"]) for h in rows)))
     kind_w = max(_display_width(t("col_kind")), max(_display_width(i) for i in icons))
     source_w = max(_display_width(t("col_source")), max(_display_width(s) for s in sources))
-    version_w = max(_display_width(t("col_version")), max(_display_width(v) for v in version_fields))
+    version_w = max(_display_width(t("col_version")), max(_display_width(v) for v in versions))
+    # 마커가 기본 간격(2칸)보다 넓으면(예: ▼🆕) 어쩔 수 없이 그만큼 더 벌어짐
+    gap_w = max((max(GAP, _display_width(m)) for m in markers), default=GAP)
 
     # desc 칸은 터미널 실제 가로폭에 맞춰서 자름 — 고정폭으로 하면 좁은 터미널에서 줄이
     # 꺾여서 다음 줄의 칸 정렬까지 같이 깨짐. 끝에서 2칸은 여유로 남겨둠(안전 마진).
-    prefix_w = name_w + 2 + kind_w + 2 + source_w + 2 + version_w + 2
+    prefix_w = name_w + 2 + kind_w + 2 + source_w + gap_w + version_w + 2
     term_width = shutil.get_terminal_size(fallback=(100, 24)).columns
     desc_budget = max(20, term_width - prefix_w - 2)
 
@@ -689,21 +694,25 @@ def cmd_search(query: str, limit_per_source: int = 8, mas: bool = False) -> None
         f"{_pad(t('col_source'), source_w)}  {_pad(t('col_version'), version_w)}  {t('col_desc')}"
     )
     print("-" * min(term_width, prefix_w + 20))
-    for h, icon, source, version_field in zip(rows, icons, sources, version_fields):
+    for h, icon, source, marker, version in zip(rows, icons, sources, markers, versions):
         name_field = _pad(h["name"], name_w)
         if h["name"] in installed:
             name_field = _bold(name_field)  # _pad()로 폭을 먼저 맞춘 뒤에 감싸야 함
         desc = _truncate_to_width(h["desc"] or "", desc_budget)
+        # 마커 없으면 기본 간격(2칸) 그대로. 있으면 그 폭만큼 앞 공백을 줄이되, 마커가
+        # 간격보다 넓어도(▼🆕 등) "brew▼🆕..."처럼 바로 붙어버리지 않게 최소 1칸은 남김.
+        lead = max(1, GAP - _display_width(marker)) if marker else GAP
+        gap = " " * lead + marker
         print(
-            f"{name_field}  {_pad(icon, kind_w)}  {_pad(source, source_w)}  "
-            f"{_pad(version_field, version_w)}  {desc}"
+            f"{name_field}  {_pad(icon, kind_w)}  {_pad(source, source_w)}"
+            f"{gap}{_pad(version, version_w)}  {desc}"
         )
 
     print()
     print(t("install_hint"))
     legend = []
     if any_star:
-        legend.append(f"{_sym('★', '*')} 이미 설치됨")
+        legend.append("* 이미 설치됨")
     if any_legacy:
         legend.append(f"{_sym('▼', 'v')} 이 macOS에 맞춘 대체판 — 자세히: jige info <이름>")
     if legend:
@@ -1256,7 +1265,7 @@ def main() -> None:
             t("help_search") + "\n\n"
             "결과의 기호: "
             f"{kind_icon('jim')} GUI 앱(jim)  {kind_icon('dogu')} CLI 도구(dogu)  "
-            f"{_sym('★', '*')} 이미 설치됨  {_sym('▼', 'v')} 이 macOS에 맞춘 대체판"
+            f"* 이미 설치됨  {_sym('▼', 'v')} 이 macOS에 맞춘 대체판"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
