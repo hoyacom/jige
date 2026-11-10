@@ -36,6 +36,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+__version__ = "0.1.0"
+
 REPO_ROOT = Path(__file__).resolve().parent
 LOCAL_RECIPES_DIR = REPO_ROOT / "recipes"
 CACHE_DIR = Path.home() / "Library" / "Caches" / "jige" / "downloads"
@@ -437,6 +439,7 @@ def main() -> None:
     # 명령어 이름은 brew/port 둘 다 쓰는 것과 그대로 맞춤
     # (install/search/info/upgrade 공통, uninstall엔 brew의 remove, list엔 port의 installed를 별칭으로 추가)
     parser = argparse.ArgumentParser(prog="jige", description=__doc__.splitlines()[0])
+    parser.add_argument("--version", action="version", version=f"jige {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_install = sub.add_parser("install", help="앱 설치/업데이트 (brew install / port install)")

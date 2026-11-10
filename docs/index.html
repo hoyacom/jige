@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jige — brew 없이도, port 없이도</title>
+<meta name="description" content="Homebrew/MacPorts의 공개 레시피를 그대로 읽어서 Mac·Linux에 맞는 앱을 찾아 설치하는 작은 도구.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%23b5541e%22/><text x=%2250%22 y=%2268%22 font-size=%2258%22 text-anchor=%22middle%22 fill=%22white%22 font-family=%22Georgia,serif%22>지</text></svg>">
+<style>
+  :root{
+    --bg:#faf6f0;
+    --bg-alt:#f1e9dd;
+    --ink:#2a2420;
+    --ink-soft:#6b5f52;
+    --brand:#b5541e;
+    --brand-dark:#8a3e14;
+    --accent:#2f6f5e;
+    --line:#e3d9c9;
+    --term-bg:#1c1a17;
+    --term-text:#eae4d8;
+    --term-dim:#8a8276;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Pretendard Variable", "Noto Sans KR", Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1b1815;
+      --bg-alt:#242019;
+      --ink:#f1ece2;
+      --ink-soft:#b8ab97;
+      --line:#3a332a;
+      --term-bg:#0f0e0c;
+    }
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--sans); line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--brand); text-decoration:none;}
+  a:hover{text-decoration:underline;}
+  .wrap{max-width:860px; margin:0 auto; padding:0 24px;}
+
+  header.hero{
+    padding:88px 0 64px; text-align:center;
+    background:
+      radial-gradient(60% 50% at 50% 0%, var(--bg-alt), transparent 70%);
+  }
+  .jige-mark{width:120px; height:120px; margin:0 auto 20px;}
+  h1{font-size:56px; margin:0 0 4px; letter-spacing:-0.02em;}
+  h1 .hangul{color:var(--brand); font-weight:800;}
+  .tagline{font-size:20px; color:var(--ink-soft); margin:0 0 36px;}
+
+  .install-box{
+    display:inline-flex; align-items:center; gap:14px;
+    background:var(--term-bg); color:var(--term-text);
+    font-family:var(--mono); font-size:14px;
+    padding:16px 20px; border-radius:10px;
+    max-width:100%; overflow-x:auto;
+    box-shadow:0 8px 24px rgba(0,0,0,.18);
+  }
+  .install-box code{white-space:nowrap;}
+  .install-box .prompt{color:var(--term-dim);}
+  .copy-btn{
+    flex:0 0 auto; border:1px solid #3a352d; background:#2a2621; color:var(--term-text);
+    border-radius:6px; padding:6px 10px; font-family:var(--sans); font-size:12px;
+    cursor:pointer;
+  }
+  .copy-btn:hover{background:#352f27;}
+  .sub-install{margin-top:14px; font-size:13px; color:var(--ink-soft);}
+
+  section{padding:56px 0; border-top:1px solid var(--line);}
+  h2{font-size:28px; margin:0 0 8px;}
+  .lead{color:var(--ink-soft); margin:0 0 28px; max-width:620px;}
+
+  .concept-grid{display:grid; grid-template-columns:1fr 1fr; gap:20px;}
+  @media (max-width:640px){.concept-grid{grid-template-columns:1fr;}}
+  .concept-card{
+    background:var(--bg-alt); border:1px solid var(--line); border-radius:14px;
+    padding:24px;
+  }
+  .concept-card .word{font-family:var(--mono); font-weight:700; font-size:22px; color:var(--brand);}
+  .concept-card .ko{color:var(--ink-soft); font-size:14px; margin-bottom:10px;}
+  .concept-card .maps{margin-top:14px; font-size:13px; color:var(--ink-soft);}
+  .concept-card .maps b{color:var(--ink);}
+
+  .question{
+    margin:28px 0; padding:18px 20px; border-left:3px solid var(--brand);
+    background:var(--bg-alt); border-radius:0 10px 10px 0; font-size:16px;
+  }
+
+  .terminal{
+    background:var(--term-bg); color:var(--term-text); border-radius:12px;
+    padding:0; overflow:hidden; box-shadow:0 10px 30px rgba(0,0,0,.2);
+  }
+  .terminal .bar{display:flex; gap:7px; padding:12px 14px; background:#262320;}
+  .terminal .dot{width:11px; height:11px; border-radius:50%;}
+  .terminal .dot.r{background:#ff5f57;} .terminal .dot.y{background:#febc2e;} .terminal .dot.g{background:#28c840;}
+  .terminal pre{
+    margin:0; padding:18px 20px 22px; font-family:var(--mono); font-size:13px;
+    white-space:pre; overflow-x:auto; line-height:1.65;
+  }
+  .terminal .p{color:#7fd99a;} .terminal .c{color:var(--term-dim);}
+  .terminal .jim{color:#e8a85c;} .terminal .dogu{color:#6fb3e0;}
+
+  table.cmd{width:100%; border-collapse:collapse; font-size:14px;}
+  table.cmd th, table.cmd td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--line);}
+  table.cmd th{color:var(--ink-soft); font-weight:600; font-size:13px;}
+  table.cmd code{font-family:var(--mono); background:var(--bg-alt); padding:2px 6px; border-radius:5px;}
+
+  .why{color:var(--ink-soft);}
+  .why strong{color:var(--ink);}
+
+  footer{padding:40px 0 70px; text-align:center; color:var(--ink-soft); font-size:14px;}
+  footer a{color:var(--ink-soft); margin:0 8px;}
+  footer a:hover{color:var(--brand);}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <svg class="jige-mark" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <!-- 지게: A자 프레임 + 짐(보따리) -->
+      <path d="M30 108 L54 18" stroke="#8a5a36" stroke-width="6" stroke-linecap="round"/>
+      <path d="M90 108 L66 18" stroke="#8a5a36" stroke-width="6" stroke-linecap="round"/>
+      <path d="M38 78 L82 78" stroke="#8a5a36" stroke-width="6" stroke-linecap="round"/>
+      <path d="M44 56 L76 56" stroke="#8a5a36" stroke-width="5" stroke-linecap="round"/>
+      <circle cx="60" cy="14" r="7" fill="#b5541e"/>
+      <path d="M22 50 Q60 28 98 50 L92 72 Q60 56 28 72 Z" fill="#d98b3f" stroke="#b5541e" stroke-width="3" stroke-linejoin="round"/>
+    </svg>
+    <h1><span class="hangul">지게</span> jige</h1>
+    <p class="tagline">brew 없이도, port 없이도 — 이 기기에 맞는 앱을 찾아서 날라다 설치</p>
+
+    <div class="install-box">
+      <span class="prompt">$</span>
+      <code id="install-cmd">/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hoyacom/jige/main/install.sh)"</code>
+      <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('install-cmd').textContent); this.textContent='복사됨 ✓'; setTimeout(()=>this.textContent='복사',1500)">복사</button>
+    </div>
+    <p class="sub-install">새 Mac이어도 상관없습니다 — Homebrew도 MacPorts도 설치돼 있을 필요 없습니다.</p>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>짐(jim)과 도구(dogu)</h2>
+    <p class="lead">Homebrew가 설치 대상을 <b>formula</b>(터미널용)와 <b>cask</b>(Dock에 뜨는 GUI 앱)로 나누듯,
+    jige는 OS에 상관없이 똑같은 질문 하나로 나눕니다.</p>
+
+    <div class="question">
+      "설치하면 Dock/런처에 아이콘이 생겨서 더블클릭으로 띄우는 독립 프로그램인가?"
+    </div>
+
+    <div class="concept-grid">
+      <div class="concept-card">
+        <div class="word">jim</div>
+        <div class="ko">짐 — 지게에 통째로 얹는 짐</div>
+        Dock·런처에 아이콘이 생기는 GUI 앱.
+        <div class="maps">대응: Homebrew의 <b>cask</b></div>
+      </div>
+      <div class="concept-card">
+        <div class="word">dogu</div>
+        <div class="ko">도구 — 지게꾼이 손에 쥐고 바로 쓰는 연장</div>
+        터미널에서 직접 쓰는 명령·라이브러리.
+        <div class="maps">대응: Homebrew의 <b>formula</b></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>한 번에 검색, 한 번에 설치</h2>
+    <p class="lead">Homebrew(Cask/Formula) + MacPorts + 자체 레포지토리를 동시에 뒤져서
+    어디 소속인지 분류까지 보여줍니다. 전부 공개 HTTP API라서, 이 기기에 brew나 port가
+    전혀 없어도 검색·설치가 됩니다.</p>
+
+    <div class="terminal">
+      <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span></div>
+      <pre><span class="p">$</span> jige search hop
+이름                 종류       분류                버전      설명
+<span class="jim">hop                  jim        Homebrew(Cask)      0.5.2     View and edit HWP documents</span>
+<span class="jim">hopper-disassembler  jim        Homebrew(Cask)      6.6.2     Reverse engineering tool...</span>
+<span class="dogu">hopenpgp-tools       dogu       Homebrew(CLI)       0.26.1    Command-line tools for OpenPGP...</span>
+
+<span class="p">$</span> jige install hop
+<span class="c">macOS 코드네임: monterey / 아키텍처: x86_64
+레시피: HOP (Homebrew-Cask 공개 레시피, 등록 버전 0.5.2)
+선택된 다운로드: .../HOP-macos-x64.dmg
+sha256 체크섬 일치 확인됨.</span>
+완료: HOP.app  0.3.1 -&gt; 0.5.2</pre>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>명령어</h2>
+    <p class="lead">brew와 port 둘 다 쓰는 이름 그대로 맞췄습니다.</p>
+    <table class="cmd">
+      <tr><th>jige</th><th>brew</th><th>port</th></tr>
+      <tr><td><code>jige search &lt;검색어&gt;</code></td><td><code>brew search</code></td><td><code>port search</code></td></tr>
+      <tr><td><code>jige install &lt;이름&gt;</code></td><td><code>brew install</code></td><td><code>port install</code></td></tr>
+      <tr><td><code>jige info &lt;이름&gt;</code></td><td><code>brew info</code></td><td><code>port info</code></td></tr>
+      <tr><td><code>jige upgrade [이름]</code></td><td><code>brew upgrade</code></td><td><code>port upgrade</code></td></tr>
+      <tr><td><code>jige list</code></td><td><code>brew list</code></td><td><code>port installed</code></td></tr>
+      <tr><td><code>jige uninstall &lt;이름&gt;</code></td><td><code>brew uninstall</code></td><td><code>port uninstall</code></td></tr>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>왜 만들었나</h2>
+    <p class="why">Mac이 여러 대(Apple Silicon, Intel+Homebrew, Intel+MacPorts)인데, 전부 Homebrew로
+    통일하고 싶지는 않았습니다. 그런데 Homebrew-Cask는 "어떤 OS/아키텍처에 어떤 파일을,
+    어떤 체크섬으로" 받아야 하는지를 이미 공개 JSON API로 정리해두고 커뮤니티가 계속
+    최신으로 갱신해줍니다. jige는 이 JSON만 HTTP로 읽어서 brew 바이너리 없이 같은 정보를
+    활용합니다 — <strong>이미 있는 레포(Homebrew-Cask, MacPorts)는 그대로 래핑</strong>하고,
+    <strong>둘 다에 없는 것만</strong> 자체 레포지토리에 직접 추가합니다.</p>
+  </div>
+</section>
+
+<footer>
+  <a href="https://github.com/hoyacom/jige">GitHub</a>
+  <a href="https://github.com/hoyacom/jige/blob/main/LICENSE">GPLv3</a>
+  <a href="https://github.com/hoyacom/jige#readme">README</a>
+</footer>
+
+</body>
+</html>
