@@ -573,10 +573,18 @@ def cmd_search(query: str, limit_per_source: int = 8, mas: bool = False) -> None
     rows.sort(key=lambda h: h["rank"])
 
     name_w = max(4, min(28, max(len(h["name"]) for h in rows)))
+    # desc 칸은 터미널 실제 가로폭에 맞춰서 자름 — 고정폭으로 하면 좁은 터미널에서 줄이
+    # 꺾여서 다음 줄의 칸 정렬까지 같이 깨짐. (한글은 터미널에서 2칸을 차지하는데 여기선
+    # 그냥 글자 수로만 계산 — 완벽하진 않지만 지금 정도 길이에선 크게 안 틀어짐)
+    prefix_w = name_w + 2 + 8 + 2 + 16 + 2 + 12 + 2
+    term_width = shutil.get_terminal_size(fallback=(100, 24)).columns
+    desc_budget = max(20, term_width - prefix_w)
+
     print(f"{t('col_name'):<{name_w}}  {t('col_kind'):<8}  {t('col_source'):<16}  {t('col_version'):<12}  {t('col_desc')}")
-    print("-" * (name_w + 8 + 16 + 12 + 40))
+    print("-" * min(term_width, name_w + 8 + 16 + 12 + 40))
     for h in rows:
-        desc = (h["desc"] or "")[:90]
+        raw_desc = h["desc"] or ""
+        desc = raw_desc if len(raw_desc) <= desc_budget else raw_desc[:desc_budget - 1] + "…"
         print(f"{h['name']:<{name_w}}  {h['kind']:<8}  {SOURCE_LABEL[h['source']]:<16}  {h['version']:<12}  {desc}")
 
     print()
