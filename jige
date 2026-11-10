@@ -33,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -182,9 +183,11 @@ STRINGS = {
         "ja": "'{q}' の検索結果なし(Homebrew / MacPorts / ローカルリポジトリすべて)。",
     },
     "install_hint": {
-        "ko": "설치: jige install <이름>  (Homebrew(Cask) 항목은 지금 바로 설치 지원 — 나머지는 다음 단계에서 연결)",
-        "en": "Install: jige install <name>  (Homebrew Cask entries install now — the rest are wired up next)",
-        "ja": "インストール: jige install <名前>  (Homebrew(Cask)は今すぐ対応 — 残りは今後対応予定)",
+        # 터미널이 좁아도 예측 못 한 중간 지점에서 꺾이지 않도록 줄바꿈을 직접 넣음
+        # (한 줄로 두면 좁은 터미널에서 아무 데서나 wrap돼서 보기 안 좋았음)
+        "ko": "설치: jige install <이름>\n      (Homebrew(Cask) 항목은 지금 바로 설치 지원 — 나머지는 다음 단계에서 연결)",
+        "en": "Install: jige install <name>\n         (Homebrew Cask entries install now — the rest are wired up next)",
+        "ja": "インストール: jige install <名前>\n           (Homebrew(Cask)は今すぐ対応 — 残りは今後対応予定)",
     },
     "app_description": {
         "ko": "brew 없이도 Homebrew·MacPorts·Mac App Store 공개 레시피를 읽어서 이 기기에 맞는 앱을 찾아 설치",
@@ -421,6 +424,44 @@ def load_homebrew_index(kind: str) -> list[dict]:
     return json.loads(dest.read_text())
 
 
+def _display_width(s: str) -> int:
+    """터미널에서 실제로 차지하는 칸 수. 한글/이모지처럼 두 칸 쓰는 문자가 있어서
+    len()만으로 패딩하면(파이썬은 글자 수만 셈) 한글이 섞인 칸이 실제보다 좁게
+    계산돼 테이블이 밀림 — search 결과에 한글 헤더(종류/분류/버전)·태그(🆕 등)가
+    섞이면서 실제로 겪은 문제."""
+    width = 0
+    for ch in s:
+        width += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return width
+
+
+def _pad(s: str, width: int) -> str:
+    return s + " " * max(0, width - _display_width(s))
+
+
+def _truncate_to_width(s: str, max_width: int) -> str:
+    if _display_width(s) <= max_width:
+        return s
+    out: list[str] = []
+    w = 0
+    for ch in s:
+        cw = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        if w + cw > max_width - 1:  # 말줄임표("…", 폭 1) 자리를 남겨둠
+            break
+        out.append(ch)
+        w += cw
+    return "".join(out) + "…"
+
+
+def simplify_version_for_display(version: str) -> str:
+    """search 결과 화면에만 쓰는 버전 표시 — 빌드번호/리비전 suffix(",175245"나
+    "-174740" 같은 것)는 보기엔 필요 없어서 뺌. 설치에 쓰는 실제 레시피의 version/
+    url/sha256은 이 함수를 안 거치고 fetch_recipe()로 새로 받아오므로 전혀 영향 없음."""
+    v = version.split(",")[0]
+    v = re.split(r"-(?=\d)", v, maxsplit=1)[0]
+    return v
+
+
 def _rank(query: str, *fields: str) -> int:
     """낮을수록 더 관련 있음. 매칭 안 되면 None 대신 큰 값을 돌려주는 쪽에서 걸러냄."""
     q = query.lower()
@@ -572,20 +613,36 @@ def cmd_search(query: str, limit_per_source: int = 8, mas: bool = False) -> None
         rows.extend(hits[:limit_per_source])
     rows.sort(key=lambda h: h["rank"])
 
-    name_w = max(4, min(28, max(len(h["name"]) for h in rows)))
+    # 종류/분류/버전 칸은 실제 들어갈 값 기준으로 폭을 맞춤 — 전엔 8/16/12로 넉넉하게
+    # 고정해둬서 "Homebrew"/"jim"처럼 짧은 값만 있을 때 공백이 과하게 넓었음. 폭 계산엔
+    # _display_width()를 써서 한글 헤더(종류/분류/버전은 2글자지만 터미널에서 4칸)가
+    # len() 기준보다 넓게 패딩되던 것도 같이 고침.
+    display_versions = [simplify_version_for_display(h["version"]) for h in rows]
+    kinds = [h["kind"] for h in rows]
+    sources = [SOURCE_LABEL[h["source"]] for h in rows]
+
+    name_w = max(4, min(28, max(_display_width(h["name"]) for h in rows)))
+    kind_w = max(_display_width(t("col_kind")), max(_display_width(k) for k in kinds))
+    source_w = max(_display_width(t("col_source")), max(_display_width(s) for s in sources))
+    version_w = max(_display_width(t("col_version")), max(_display_width(v) for v in display_versions))
+
     # desc 칸은 터미널 실제 가로폭에 맞춰서 자름 — 고정폭으로 하면 좁은 터미널에서 줄이
-    # 꺾여서 다음 줄의 칸 정렬까지 같이 깨짐. (한글은 터미널에서 2칸을 차지하는데 여기선
-    # 그냥 글자 수로만 계산 — 완벽하진 않지만 지금 정도 길이에선 크게 안 틀어짐)
-    prefix_w = name_w + 2 + 8 + 2 + 16 + 2 + 12 + 2
+    # 꺾여서 다음 줄의 칸 정렬까지 같이 깨짐.
+    prefix_w = name_w + 2 + kind_w + 2 + source_w + 2 + version_w + 2
     term_width = shutil.get_terminal_size(fallback=(100, 24)).columns
     desc_budget = max(20, term_width - prefix_w)
 
-    print(f"{t('col_name'):<{name_w}}  {t('col_kind'):<8}  {t('col_source'):<16}  {t('col_version'):<12}  {t('col_desc')}")
-    print("-" * min(term_width, name_w + 8 + 16 + 12 + 40))
-    for h in rows:
-        raw_desc = h["desc"] or ""
-        desc = raw_desc if len(raw_desc) <= desc_budget else raw_desc[:desc_budget - 1] + "…"
-        print(f"{h['name']:<{name_w}}  {h['kind']:<8}  {SOURCE_LABEL[h['source']]:<16}  {h['version']:<12}  {desc}")
+    print(
+        f"{_pad(t('col_name'), name_w)}  {_pad(t('col_kind'), kind_w)}  "
+        f"{_pad(t('col_source'), source_w)}  {_pad(t('col_version'), version_w)}  {t('col_desc')}"
+    )
+    print("-" * min(term_width, prefix_w + 20))
+    for h, kind, source, version in zip(rows, kinds, sources, display_versions):
+        desc = _truncate_to_width(h["desc"] or "", desc_budget)
+        print(
+            f"{_pad(h['name'], name_w)}  {_pad(kind, kind_w)}  "
+            f"{_pad(source, source_w)}  {_pad(version, version_w)}  {desc}"
+        )
 
     print()
     print(t("install_hint"))
