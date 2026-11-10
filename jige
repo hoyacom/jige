@@ -179,7 +179,7 @@ def search_mas(query: str) -> list[dict]:
         return []
     try:
         params = urllib.parse.urlencode(
-            {"media": "software", "entity": "macSoftware", "term": query, "limit": 15}
+            {"media": "software", "entity": "macSoftware", "country": "kr", "term": query, "limit": 15}
         )
         with urllib.request.urlopen(f"{ITUNES_SEARCH_API}?{params}", timeout=10) as r:
             data = json.load(r)
@@ -262,7 +262,7 @@ def fetch_mas_recipe(token: str) -> dict | None:
         return None
     try:
         params = urllib.parse.urlencode(
-            {"media": "software", "entity": "macSoftware", "term": token, "limit": 25}
+            {"media": "software", "entity": "macSoftware", "country": "kr", "term": token, "limit": 25}
         )
         with urllib.request.urlopen(f"{ITUNES_SEARCH_API}?{params}", timeout=10) as r:
             data = json.load(r)
