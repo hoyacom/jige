@@ -143,6 +143,14 @@ Homebrew-Cask의 `depends_on.macos`가 비어있는 경우가 많아서(실제�
   자동으로 포크+PR까지 만들어주는" 링크를 보여주는 걸로 대신합니다.
 - PR 생성 자체(브랜치 만들기·커밋·push)는 jige가 자동으로 하지 않습니다 — 이슈로 받아서
   메인테이너가 직접 반영하는 쪽이 지금 규모엔 더 안전하고 단순합니다.
+- jige를 설치 안 하고 GitHub에서 직접 제보하고 싶다면 **이슈를 새로 만들 때 "macOS 호환 구버전
+  제보" 템플릿**([.github/ISSUE_TEMPLATE/legacy-version.yml](.github/ISSUE_TEMPLATE/legacy-version.yml))을
+  고르면 필요한 항목(토큰/버전/지원 macOS 범위/다운로드 URL/sha256/근거 자료)이 양식으로 뜹니다 —
+  형식을 몰라도 빈칸만 채우면 됩니다. "체크섬은 직접 받아서 직접 계산한 값만" 적게 체크박스로
+  확인받습니다.
+- `recipes/legacy/<token>.json`이 아직 없는 새 토큰이면, jige가 안내하는 링크가 빈 "새 파일
+  만들기"가 아니라 **양식이 이미 채워진** GitHub "새 파일 만들기" 페이지로 바로 열립니다
+  (`github_new_file_url`) — 이미 있는 토큰이면 "기존 파일 수정"으로 바로 넘어갑니다.
 - `recipes/legacy/<token>.json`은 이 저장소에 로컬로 있으면 그걸 우선 쓰고, 없으면
   `raw.githubusercontent.com`의 `main` 브랜치 버전을 Homebrew 인덱스와 똑같은 **24시간
   캐시**로 받아옵니다(`~/Library/Caches/jige/index/legacy/`). 그래서 누군가의 PR이 머지되면

@@ -78,12 +78,40 @@ JIGE_LEGACY_RAW_BASE = f"https://raw.githubusercontent.com/{JIGE_REPO_SLUG}/main
 
 def github_edit_url(path: str) -> str:
     """GitHub 자체의 '파일 수정하면 자동 fork + PR 생성' 흐름을 그대로 가리킴 —
-    커스텀 서버/DB 없이 recipes/legacy/ 기여를 쉽게 하기 위한 링크일 뿐."""
+    커스텀 서버/DB 없이 recipes/legacy/ 기여를 쉽게 하기 위한 링크일 뿐.
+    이미 있는 파일에 한 줄 보탤 때만 씀 — 새 파일은 github_new_file_url()."""
     return f"{JIGE_REPO}/edit/main/{path}"
+
+
+def github_new_file_url(path: str, content: str = "") -> str:
+    """GitHub의 '새 파일 만들기 + 내용 미리 채우기(+자동 fork/PR)' URL. recipes/legacy/<token>.json이
+    아직 없는 새 토큰에 처음 추가할 때 씀."""
+    return f"{JIGE_REPO}/new/main?" + urllib.parse.urlencode({"filename": path, "value": content})
 
 
 def github_new_issue_url(title: str, body: str) -> str:
     return f"{JIGE_REPO}/issues/new?" + urllib.parse.urlencode({"title": title, "body": body})
+
+
+LEGACY_ENTRY_TEMPLATE = """{
+  "versions": [
+    {
+      "version": "<이 macOS에서 쓸 수 있는 구버전 번호, 예: 3.7.9>",
+      "min_macos": "<이 구버전이 지원하는 가장 낮은 macOS, 예: 11>",
+      "max_macos": "<이 구버전이 지원하는 가장 높은 macOS, 예: 12>",
+      "latest_min_macos": "<최신판이 요구하는 macOS, 예: 13 - 이게 이 구버전이 필요한 이유>",
+      "vendor_status": "<os_limit 또는 eol>",
+      "note": "<근거 설명: 왜 필요한지, 공식 문서/이슈 링크 포함>",
+      "source": ["<공식 자료 URL, 한 개 이상>"],
+      "confirmations": [],
+      "url": "<Apple Silicon(arm64)용 다운로드 URL>",
+      "sha256": "<위 파일을 직접 받아서 shasum -a 256으로 직접 계산한 값>",
+      "variations": {
+        "monterey": {"url": "<Intel용 URL, arm64와 다르면>", "sha256": "<직접 계산한 sha256>"}
+      }
+    }
+  ]
+}"""
 
 
 def offer_github_contribution(title: str, body: str, fallback_edit_path: str | None = None) -> None:
@@ -273,12 +301,23 @@ def check_macos_requirement(min_version: str | None, app_label: str) -> None:
         return
     if not meets_min_macos(min_version):
         current = ".".join(str(p) for p in macos_version_tuple())
-        edit_url = github_edit_url(f"recipes/legacy/{app_label}.json")
+        legacy_path = f"recipes/legacy/{app_label}.json"
+        if load_legacy_versions(app_label):
+            # 이미 파일이 있음 — 이 macOS는 못 커버하는 것뿐이니 새 버전 항목을 보태야 함
+            action_url = github_edit_url(legacy_path)
+            action_hint = "기존 파일에 이 macOS용 버전 추가"
+        else:
+            # 아직 파일이 없음 — 양식이 미리 채워진 "새 파일 만들기" 링크로 안내
+            action_url = github_new_file_url(legacy_path, LEGACY_ENTRY_TEMPLATE)
+            action_hint = "새 파일 만들기(양식 미리 채워짐)"
+        issue_body = f"토큰: {app_label}\n이 기기: macOS {current}\n최신판 요구: macOS {min_version} 이상"
+        issue_url = github_new_issue_url(f"legacy: {app_label}", issue_body)
         sys.exit(
             f"'{app_label}'는 macOS {min_version} 이상이 필요한데 이 기기는 {current}입니다.\n"
             f"-> 설치해도 실행이 안 될 가능성이 높아 다운로드 전에 중단합니다.\n"
             f"-> 이 macOS에서도 쓸 수 있는 구버전을 공식 홈페이지 등에서 확인하셨다면,\n"
-            f"   recipes/legacy/{app_label}.json에 추가해주세요(다른 사용자들도 바로 도움받습니다): {edit_url}"
+            f"   {legacy_path}에 추가해주세요 ({action_hint}): {action_url}\n"
+            f"   (또는 이슈로 제보: {issue_url})"
         )
 
 
