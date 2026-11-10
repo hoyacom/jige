@@ -650,12 +650,15 @@ def cmd_search(query: str, limit_per_source: int = 8, mas: bool = False) -> None
 
     # 종류는 jim/dogu 텍스트 대신 아이콘, 분류는 Homebrew/MacPorts 대신 실제 명령어 이름
     # (brew/port/mas) — 둘 다 짧아지는 김에 칸도 실제 값 기준으로 동적 계산.
-    # 버전 칸엔 마커를 붙임: ★(이미 설치됨), ▼+신뢰도(이 macOS용 대체판 — 상세는 jige info).
+    # ★(이미 설치됨)/▼+신뢰도(이 macOS용 대체판 — 상세는 jige info)는 버전 칸 "안"이 아니라
+    # 분류와 버전 사이 별도의 좁은 칸에 둠 — 버전 문자열 안에 넣으면 마커 있는 행만 버전이
+    # 오른쪽으로 밀려서 다른 행들과 버전 시작 위치가 안 맞았음(피드백으로 발견).
     # desc엔 더 이상 아무것도 안 욱여넣음 — 폭 제약 없는 맨 끝 칸이라도 너무 길어지면
     # 읽기 힘들다는 피드백이 있었어서, 마커만 보고 필요하면 jige info로 넘어가게 함.
     icons = [kind_icon(h["kind"]) for h in rows]
     sources = [SOURCE_LABEL.get(h["source"], h["source"]) for h in rows]
-    version_fields = []
+    version_fields = [simplify_version_for_display(h["version"]) for h in rows]
+    markers = []
     any_star = False
     any_legacy = False
     for h in rows:
@@ -667,33 +670,37 @@ def cmd_search(query: str, limit_per_source: int = 8, mas: bool = False) -> None
         if legacy:
             marker += _sym("▼", "v") + trust_badge(legacy)
             any_legacy = True
-        v = simplify_version_for_display(h["version"])
-        version_fields.append(f"{marker} {v}" if marker else v)
+        markers.append(marker)
+    show_marker_col = any_star or any_legacy
 
     name_w = max(4, min(28, max(_display_width(h["name"]) for h in rows)))
     kind_w = max(_display_width(t("col_kind")), max(_display_width(i) for i in icons))
     source_w = max(_display_width(t("col_source")), max(_display_width(s) for s in sources))
+    marker_w = max((_display_width(m) for m in markers), default=0) if show_marker_col else 0
     version_w = max(_display_width(t("col_version")), max(_display_width(v) for v in version_fields))
 
     # desc 칸은 터미널 실제 가로폭에 맞춰서 자름 — 고정폭으로 하면 좁은 터미널에서 줄이
     # 꺾여서 다음 줄의 칸 정렬까지 같이 깨짐. 끝에서 2칸은 여유로 남겨둠(안전 마진).
-    prefix_w = name_w + 2 + kind_w + 2 + source_w + 2 + version_w + 2
+    marker_col_w = (marker_w + 2) if show_marker_col else 0
+    prefix_w = name_w + 2 + kind_w + 2 + source_w + 2 + marker_col_w + version_w + 2
     term_width = shutil.get_terminal_size(fallback=(100, 24)).columns
     desc_budget = max(20, term_width - prefix_w - 2)
 
+    marker_header = _pad("", marker_w) + "  " if show_marker_col else ""
     print(
         f"{_pad(t('col_name'), name_w)}  {_pad(t('col_kind'), kind_w)}  "
-        f"{_pad(t('col_source'), source_w)}  {_pad(t('col_version'), version_w)}  {t('col_desc')}"
+        f"{_pad(t('col_source'), source_w)}  {marker_header}{_pad(t('col_version'), version_w)}  {t('col_desc')}"
     )
     print("-" * min(term_width, prefix_w + 20))
-    for h, icon, source, version_field in zip(rows, icons, sources, version_fields):
+    for h, icon, source, marker, version_field in zip(rows, icons, sources, markers, version_fields):
         name_field = _pad(h["name"], name_w)
         if h["name"] in installed:
             name_field = _bold(name_field)  # _pad()로 폭을 먼저 맞춘 뒤에 감싸야 함
         desc = _truncate_to_width(h["desc"] or "", desc_budget)
+        marker_field = _pad(marker, marker_w) + "  " if show_marker_col else ""
         print(
             f"{name_field}  {_pad(icon, kind_w)}  {_pad(source, source_w)}  "
-            f"{_pad(version_field, version_w)}  {desc}"
+            f"{marker_field}{_pad(version_field, version_w)}  {desc}"
         )
 
     print()
