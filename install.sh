@@ -7,6 +7,16 @@ REPO_URL="https://github.com/hoyacom/jige.git"
 INSTALL_DIR="$HOME/.jige"
 BIN_TARGET="/usr/local/bin/jige"
 
+if [ "$(uname -s)" = "Darwin" ] && ! xcode-select -p >/dev/null 2>&1; then
+  # command -v git은 CLT 미설치 상태에서도 /usr/bin/git 스텁이 있어서 그냥 통과해버림 —
+  # 실제로 쓰려고 하면 그제서야 GUI 팝업이 뜨고 이 스크립트는 조용히 실패하게 됨.
+  # xcode-select -p로 미리 감지해서 먼저 알려줌.
+  echo "이 Mac엔 아직 Xcode Command Line Tools(git·python3 포함)가 없습니다." >&2
+  echo "터미널에 아래 명령을 먼저 실행해서 설치를 끝낸 뒤, 이 jige 설치 명령을 다시 실행해주세요:" >&2
+  echo "  xcode-select --install" >&2
+  exit 1
+fi
+
 if ! command -v git >/dev/null 2>&1; then
   echo "git이 필요합니다 (macOS는 Xcode Command Line Tools, Linux는 배포판 패키지로 설치)." >&2
   exit 1
