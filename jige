@@ -24,6 +24,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import os
 import platform
 import plistlib
 import re
@@ -64,6 +65,105 @@ MACOS_CODENAME = {
     "10.15": "catalina", "11": "big_sur", "12": "monterey", "13": "ventura",
     "14": "sonoma", "15": "sequoia", "26": "tahoe", "27": "golden_gate",
 }
+
+# ---------------------------------------------------------------------------
+# i18n — 완벽한 번역은 아니고, 표제부(헤더/명령어 설명)만 한/영/일 지원.
+# 나머지 내부 메시지는 한국어 그대로 둠.
+# ---------------------------------------------------------------------------
+
+STRINGS = {
+    "col_name": {"ko": "이름", "en": "Name", "ja": "名前"},
+    "col_kind": {"ko": "종류", "en": "Kind", "ja": "種類"},
+    "col_source": {"ko": "분류", "en": "Source", "ja": "分類"},
+    "col_version": {"ko": "버전", "en": "Version", "ja": "バージョン"},
+    "col_desc": {"ko": "설명", "en": "Description", "ja": "説明"},
+    "no_results": {
+        "ko": "'{q}' 검색 결과 없음 (Homebrew / MacPorts / 자체 레포지토리 전부).",
+        "en": "No results for '{q}' (checked Homebrew, MacPorts, and the local repo).",
+        "ja": "'{q}' の検索結果なし(Homebrew / MacPorts / ローカルリポジトリすべて)。",
+    },
+    "install_hint": {
+        "ko": "설치: jige install <이름>  (Homebrew(Cask) 항목은 지금 바로 설치 지원 — 나머지는 다음 단계에서 연결)",
+        "en": "Install: jige install <name>  (Homebrew Cask entries install now — the rest are wired up next)",
+        "ja": "インストール: jige install <名前>  (Homebrew(Cask)は今すぐ対応 — 残りは今後対応予定)",
+    },
+    "app_description": {
+        "ko": "brew 없이도 Homebrew·MacPorts·Mac App Store 공개 레시피를 읽어서 이 기기에 맞는 앱을 찾아 설치",
+        "en": "Find and install apps for this machine by reading Homebrew/MacPorts/Mac App Store's own public recipes — no brew required",
+        "ja": "brewなしでHomebrew・MacPorts・Mac App Storeの公開レシピを読み、このマシンに合うアプリを探してインストール",
+    },
+    "help_install": {
+        "ko": "앱 설치/업데이트 (brew install / port install)",
+        "en": "Install or update an app (like brew install / port install)",
+        "ja": "アプリのインストール/更新 (brew install / port install 相当)",
+    },
+    "help_search": {
+        "ko": "통합 검색 (brew search / port search)",
+        "en": "Search across all sources (like brew search / port search)",
+        "ja": "統合検索 (brew search / port search 相当)",
+    },
+    "help_info": {
+        "ko": "상세 정보, 설치 안 함 (brew info / port info)",
+        "en": "Show details without installing (like brew info / port info)",
+        "ja": "詳細情報を表示(インストールはしない、brew info / port info 相当)",
+    },
+    "help_uninstall": {
+        "ko": "제거, 휴지통행 (brew uninstall/remove)",
+        "en": "Uninstall, moved to Trash (like brew uninstall/remove)",
+        "ja": "アンインストール(ゴミ箱へ移動、brew uninstall/remove 相当)",
+    },
+    "help_list": {
+        "ko": "jige로 설치한 목록 (brew list / port installed)",
+        "en": "List apps jige has installed (like brew list / port installed)",
+        "ja": "jigeでインストールした一覧 (brew list / port installed 相当)",
+    },
+    "help_upgrade": {
+        "ko": "설치된 앱 최신판으로 재설치 (brew upgrade / port upgrade)",
+        "en": "Reinstall installed apps at the latest version (like brew upgrade / port upgrade)",
+        "ja": "インストール済みアプリを最新版に (brew upgrade / port upgrade 相当)",
+    },
+    "help_update": {
+        "ko": "jige 자체를 최신 코드로 갱신 (brew update / port selfupdate)",
+        "en": "Update jige itself to the latest code (like brew update / port selfupdate)",
+        "ja": "jige自体を最新コードに更新 (brew update / port selfupdate 相当)",
+    },
+    "help_config": {
+        "ko": "jige 설정 보기/변경 (예: Mac App Store 켜기/끄기)",
+        "en": "View/change jige settings (e.g. turn Mac App Store search on/off)",
+        "ja": "jigeの設定を表示/変更(例: Mac App Store検索のON/OFF)",
+    },
+}
+
+
+def detect_lang() -> str:
+    env = os.environ.get("JIGE_LANG")
+    if env in ("ko", "en", "ja"):
+        return env
+    locale_str = ""
+    if platform.system() == "Darwin":
+        try:
+            locale_str = subprocess.check_output(
+                ["defaults", "read", "-g", "AppleLocale"], text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        except Exception:
+            pass
+    if not locale_str:
+        locale_str = os.environ.get("LANG", "")
+    locale_str = locale_str.lower()
+    if locale_str.startswith("ko"):
+        return "ko"
+    if locale_str.startswith("ja"):
+        return "ja"
+    return "en"
+
+
+LANG = detect_lang()
+
+
+def t(key: str, **kwargs) -> str:
+    text = STRINGS.get(key, {}).get(LANG) or STRINGS.get(key, {}).get("en") or key
+    return text.format(**kwargs) if kwargs else text
 
 
 def sw_vers_codename() -> str:
@@ -263,7 +363,7 @@ def cmd_search(query: str, limit_per_source: int = 8, mas: bool = False) -> None
         + search_mas(query, allow_mas) + search_homebrew(query)
     )
     if not all_hits:
-        print(f"'{query}' 검색 결과 없음 (Homebrew / MacPorts / 자체 레포지토리 전부).")
+        print(t("no_results", q=query))
         if not allow_mas:
             print("(Mac App Store는 안 뒤짐 — 포함하려면 'jige search ... --mas' 또는 'jige config mas on')")
         return
@@ -279,14 +379,14 @@ def cmd_search(query: str, limit_per_source: int = 8, mas: bool = False) -> None
     rows.sort(key=lambda h: h["rank"])
 
     name_w = max(4, min(28, max(len(h["name"]) for h in rows)))
-    print(f"{'이름':<{name_w}}  {'종류':<8}  {'분류':<16}  {'버전':<12}  설명")
+    print(f"{t('col_name'):<{name_w}}  {t('col_kind'):<8}  {t('col_source'):<16}  {t('col_version'):<12}  {t('col_desc')}")
     print("-" * (name_w + 8 + 16 + 12 + 40))
     for h in rows:
         desc = (h["desc"] or "")[:60]
         print(f"{h['name']:<{name_w}}  {h['kind']:<8}  {SOURCE_LABEL[h['source']]:<16}  {h['version']:<12}  {desc}")
 
     print()
-    print("설치: jige install <이름>  (Homebrew(Cask) 항목만 지금 바로 자동 설치 지원 — 나머지는 다음 단계에서 연결)")
+    print(t("install_hint"))
 
 
 def fetch_mas_recipe(token: str, allow_mas: bool) -> dict | None:
@@ -650,29 +750,29 @@ def cmd_upgrade(token: str | None) -> None:
 def main() -> None:
     # 명령어 이름은 brew/port 둘 다 쓰는 것과 그대로 맞춤
     # (install/search/info/upgrade 공통, uninstall엔 brew의 remove, list엔 port의 installed를 별칭으로 추가)
-    parser = argparse.ArgumentParser(prog="jige", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="jige", description=t("app_description"))
     parser.add_argument("--version", action="version", version=f"jige {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_install = sub.add_parser("install", help="앱 설치/업데이트 (brew install / port install)")
+    p_install = sub.add_parser("install", help=t("help_install"))
     p_install.add_argument("token")
     p_install.add_argument(
         "--mas", action="store_true",
         help="이번 한 번만 Mac App Store도 뒤짐 ('jige config mas on' 없이 일회성으로 켜는 옵션)"
     )
 
-    p_search = sub.add_parser("search", help="통합 검색 (brew search / port search)")
+    p_search = sub.add_parser("search", help=t("help_search"))
     p_search.add_argument("query")
     p_search.add_argument(
         "--mas", action="store_true",
         help="이번 한 번만 Mac App Store도 뒤짐 ('jige config mas on' 없이 일회성으로 켜는 옵션)"
     )
 
-    p_info = sub.add_parser("info", help="상세 정보, 설치 안 함 (brew info / port info)")
+    p_info = sub.add_parser("info", help=t("help_info"))
     p_info.add_argument("token")
 
     p_uninstall = sub.add_parser(
-        "uninstall", aliases=["remove"], help="제거, 휴지통행 (brew uninstall/remove)"
+        "uninstall", aliases=["remove"], help=t("help_uninstall")
     )
     p_uninstall.add_argument("token")
     p_uninstall.add_argument(
@@ -680,14 +780,14 @@ def main() -> None:
         help="앱뿐 아니라 설정/캐시/로그 등 부가 파일까지 정리 (brew uninstall --zap과 동일)"
     )
 
-    sub.add_parser("list", aliases=["installed"], help="jige로 설치한 목록 (brew list / port installed)")
+    sub.add_parser("list", aliases=["installed"], help=t("help_list"))
 
-    p_upgrade = sub.add_parser("upgrade", help="설치된 앱 최신판으로 재설치 (brew upgrade / port upgrade)")
+    p_upgrade = sub.add_parser("upgrade", help=t("help_upgrade"))
     p_upgrade.add_argument("token", nargs="?", default=None, help="생략하면 설치된 전체 업그레이드")
 
-    sub.add_parser("update", help="jige 자체를 최신 코드로 갱신 (brew update / port selfupdate)")
+    sub.add_parser("update", help=t("help_update"))
 
-    p_config = sub.add_parser("config", help="jige 설정 보기/변경 (예: Mac App Store 켜기/끄기)")
+    p_config = sub.add_parser("config", help=t("help_config"))
     p_config.add_argument("key", nargs="?", default=None)
     p_config.add_argument("value", nargs="?", default=None)
 
