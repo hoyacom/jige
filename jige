@@ -64,13 +64,22 @@ MACPORTS_SEARCH_API = "https://ports.macports.org/api/v1/ports/"
 ITUNES_SEARCH_API = "https://itunes.apple.com/search"  # mas가 내부적으로 쓰는 것과 같은 공개 API
 
 SOURCE_LABEL = {
-    # jim/dogu(종류) 컬럼이 이미 Cask/CLI 구분을 보여주므로 여기서 또 반복 안 함
-    "homebrew-cask": "Homebrew",
-    "homebrew-formula": "Homebrew",
-    "macports": "MacPorts",
-    "mas": "Mac App Store",
-    "local": "자체 레포지토리",
+    # "Homebrew"/"MacPorts"라고 풀어쓰지 않고 실제 명령어 이름(brew/port/mas)으로 —
+    # 어차피 그 생태계를 아는 사람한텐 이게 더 바로 전달되고, 칸도 훨씬 좁아짐
+    "homebrew-cask": "brew",
+    "homebrew-formula": "brew",
+    "macports": "port",
+    "mas": "mas",
+    "local": "local",
 }
+
+KIND_ICON_UNICODE = {"jim": "💻", "dogu": "🔧", "unknown": "❓"}  # jim=GUI 앱, dogu=CLI 도구
+KIND_ICON_ASCII = {"jim": "GUI", "dogu": "CLI", "unknown": "?"}
+
+
+def kind_icon(kind: str) -> str:
+    table = KIND_ICON_UNICODE if _supports_unicode() else KIND_ICON_ASCII
+    return table.get(kind, table["unknown"])
 
 JIGE_REPO_SLUG = "hoyacom/jige"
 JIGE_REPO = f"https://github.com/{JIGE_REPO_SLUG}"
@@ -140,13 +149,14 @@ def offer_github_contribution(title: str, body: str, fallback_edit_path: str | N
 
 
 def trust_badge(entry: dict) -> str:
-    """search처럼 짧게만 보여줄 때 쓰는 한 토큰짜리 신뢰 단계 표시."""
+    """search처럼 짧게만 보여줄 때 쓰는 한 토큰짜리 신뢰 단계 표시.
+    UTF-8이 아닌 터미널에선 이모지/기호 대신 ASCII로."""
     n = len(entry.get("confirmations") or [])
     if n == 0:
-        return "🆕"
+        return _sym("🆕", "NEW")
     if n < 3:
-        return f"✓{n}"
-    return f"✓✓{n}"
+        return _sym(f"✓{n}", f"OK{n}")
+    return _sym(f"✓✓{n}", f"OK+{n}")
 
 
 def trust_label(entry: dict) -> str:
@@ -155,10 +165,10 @@ def trust_label(entry: dict) -> str:
     jige가 뭘 자동 집계하는 게 아니라 그 배열 길이 자체가 신뢰 단계임."""
     n = len(entry.get("confirmations") or [])
     if n == 0:
-        return "🆕 방금 등록됨 (공식 문서로 확인, 다른 사용자 확인 아직 없음)"
+        return _sym("🆕", "NEW") + " 방금 등록됨 (공식 문서로 확인, 다른 사용자 확인 아직 없음)"
     if n < 3:
-        return f"✓ 실제 설치로 확인됨 ({n}명)"
-    return f"✓✓ 여러 명이 확인함 ({n}명)"
+        return _sym("✓", "OK") + f" 실제 설치로 확인됨 ({n}명)"
+    return _sym("✓✓", "OK+") + f" 여러 명이 확인함 ({n}명)"
 
 
 MACOS_CODENAME = {
@@ -428,10 +438,12 @@ def _display_width(s: str) -> int:
     """터미널에서 실제로 차지하는 칸 수. 한글/이모지처럼 두 칸 쓰는 문자가 있어서
     len()만으로 패딩하면(파이썬은 글자 수만 셈) 한글이 섞인 칸이 실제보다 좁게
     계산돼 테이블이 밀림 — search 결과에 한글 헤더(종류/분류/버전)·태그(🆕 등)가
-    섞이면서 실제로 겪은 문제."""
+    섞이면서 실제로 겪은 문제. "A"(폭 모호, "…"·"★"·"▼" 등)도 2칸으로 침 — 한글
+    로케일 터미널에서는 이런 문자를 넓게 그리는 경우가 많아서("…" 때문에 줄바꿈이
+    생겼던 적 있음), 좀 넉넉하게 잡는 쪽이 줄바꿈/정렬 깨짐보다 안전함."""
     width = 0
     for ch in s:
-        width += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        width += 2 if unicodedata.east_asian_width(ch) in ("W", "F", "A") else 1
     return width
 
 
@@ -443,6 +455,17 @@ def _supports_color() -> bool:
     return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
 
+def _supports_unicode() -> bool:
+    """출력 인코딩이 UTF-8 계열이 아니면(옛 터미널, 특정 locale 등) 이모지/기호
+    대신 ASCII로 대체 — 깨진 문자(□, ?)로 나오는 것보단 밋밋해도 읽히는 게 나음."""
+    enc = (getattr(sys.stdout, "encoding", None) or "").lower()
+    return "utf" in enc
+
+
+def _sym(unicode_form: str, ascii_form: str) -> str:
+    return unicode_form if _supports_unicode() else ascii_form
+
+
 def _bold(s: str) -> str:
     """항상 _pad()/_truncate_to_width()로 먼저 폭을 맞춘 뒤에 감싸야 함 — ANSI
     코드 자체는 화면에 안 보이지만 글자 수로는 잡혀서, 먼저 감싸면 폭 계산이 틀어짐."""
@@ -452,15 +475,17 @@ def _bold(s: str) -> str:
 def _truncate_to_width(s: str, max_width: int) -> str:
     if _display_width(s) <= max_width:
         return s
+    ellipsis = _sym("…", "...")
+    ellipsis_w = _display_width(ellipsis)
     out: list[str] = []
     w = 0
     for ch in s:
-        cw = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
-        if w + cw > max_width - 1:  # 말줄임표("…", 폭 1) 자리를 남겨둠
+        cw = 2 if unicodedata.east_asian_width(ch) in ("W", "F", "A") else 1  # _display_width와 맞춤
+        if w + cw > max_width - ellipsis_w:
             break
         out.append(ch)
         w += cw
-    return "".join(out) + "…"
+    return "".join(out) + ellipsis
 
 
 def simplify_version_for_display(version: str) -> str:
@@ -501,13 +526,10 @@ def search_homebrew(query: str) -> list[dict]:
             desc = entry.get("desc", "")
             rank = _rank(query, token, display_name, desc)
             if rank < 999:
-                if kind == "cask" and (legacy := pick_legacy_for_this_mac(token)):
-                    # version 칸은 고정폭(<12)으로 테이블 정렬을 맞추고 있어서, 여기에 긴
-                    # 한글 설명을 붙이면 칸이 깨짐(터미널에서 한글은 2칸 차지라 더 심해짐) —
-                    # 짧은 버전 번호만 넣고, 나머지 설명은 폭 제한 없는 맨 끝 desc 칸으로.
-                    tag = "EOL" if legacy.get("vendor_status") == "eol" else "OS지원한계"
-                    latest_short = version.split(",")[0]  # 빌드번호(",175245" 등) 빼고 간단히
-                    desc = f"[{tag} {trust_badge(legacy)}, 최신 {latest_short}은 macOS {legacy['latest_min_macos']}+] {desc}"
+                # 대체판 상세(최신판 버전/EOL 여부/근거)는 더 이상 search 테이블에 안 욱여넣고
+                # jige info에서 보게 함 — search는 ▼ 기호만 띄움(cmd_search가 처리).
+                legacy = pick_legacy_for_this_mac(token) if kind == "cask" else None
+                if legacy:
                     version = legacy["version"]
                 hits.append({
                     "name": token,
@@ -516,6 +538,7 @@ def search_homebrew(query: str) -> list[dict]:
                     "source": source,
                     "kind": "jim" if kind == "cask" else "dogu",  # jim(짐)=데스크톱 앱, dogu(도구)=CLI
                     "rank": rank,
+                    "legacy": legacy,
                 })
     return hits
 
@@ -623,47 +646,65 @@ def cmd_search(query: str, limit_per_source: int = 8, mas: bool = False) -> None
         rows.extend(hits[:limit_per_source])
     rows.sort(key=lambda h: h["rank"])
 
-    # 종류/분류/버전 칸은 실제 들어갈 값 기준으로 폭을 맞춤 — 전엔 8/16/12로 넉넉하게
-    # 고정해둬서 "Homebrew"/"jim"처럼 짧은 값만 있을 때 공백이 과하게 넓었음. 폭 계산엔
-    # _display_width()를 써서 한글 헤더(종류/분류/버전은 2글자지만 터미널에서 4칸)가
-    # len() 기준보다 넓게 패딩되던 것도 같이 고침.
-    display_versions = [simplify_version_for_display(h["version"]) for h in rows]
-    kinds = [h["kind"] for h in rows]
-    sources = [SOURCE_LABEL[h["source"]] for h in rows]
+    installed = load_state()
+
+    # 종류는 jim/dogu 텍스트 대신 아이콘, 분류는 Homebrew/MacPorts 대신 실제 명령어 이름
+    # (brew/port/mas) — 둘 다 짧아지는 김에 칸도 실제 값 기준으로 동적 계산.
+    # 버전 칸엔 마커를 붙임: ★(이미 설치됨), ▼+신뢰도(이 macOS용 대체판 — 상세는 jige info).
+    # desc엔 더 이상 아무것도 안 욱여넣음 — 폭 제약 없는 맨 끝 칸이라도 너무 길어지면
+    # 읽기 힘들다는 피드백이 있었어서, 마커만 보고 필요하면 jige info로 넘어가게 함.
+    icons = [kind_icon(h["kind"]) for h in rows]
+    sources = [SOURCE_LABEL.get(h["source"], h["source"]) for h in rows]
+    version_fields = []
+    any_star = False
+    any_legacy = False
+    for h in rows:
+        marker = ""
+        if h["name"] in installed:
+            marker += _sym("★", "*")
+            any_star = True
+        legacy = h.get("legacy")
+        if legacy:
+            marker += _sym("▼", "v") + trust_badge(legacy)
+            any_legacy = True
+        v = simplify_version_for_display(h["version"])
+        version_fields.append(f"{marker} {v}" if marker else v)
 
     name_w = max(4, min(28, max(_display_width(h["name"]) for h in rows)))
-    kind_w = max(_display_width(t("col_kind")), max(_display_width(k) for k in kinds))
+    kind_w = max(_display_width(t("col_kind")), max(_display_width(i) for i in icons))
     source_w = max(_display_width(t("col_source")), max(_display_width(s) for s in sources))
-    version_w = max(_display_width(t("col_version")), max(_display_width(v) for v in display_versions))
+    version_w = max(_display_width(t("col_version")), max(_display_width(v) for v in version_fields))
 
     # desc 칸은 터미널 실제 가로폭에 맞춰서 자름 — 고정폭으로 하면 좁은 터미널에서 줄이
-    # 꺾여서 다음 줄의 칸 정렬까지 같이 깨짐. 끝에서 2칸은 여유로 남겨둠 — "…" 같은 문자는
-    # 유니코드 표준상 "폭 모호(Ambiguous)"라 한글 로케일 터미널에서 실제로는 2칸을 쓰는
-    # 경우가 많아서(_display_width는 1칸으로 계산), 꽉 채우면 1~2칸 넘쳐서 줄바꿈이 생김.
+    # 꺾여서 다음 줄의 칸 정렬까지 같이 깨짐. 끝에서 2칸은 여유로 남겨둠(안전 마진).
     prefix_w = name_w + 2 + kind_w + 2 + source_w + 2 + version_w + 2
     term_width = shutil.get_terminal_size(fallback=(100, 24)).columns
     desc_budget = max(20, term_width - prefix_w - 2)
-
-    installed = load_state()  # 이미 설치된 건 이름 칸을 굵게 표시 + desc에 [설치됨] 태그
 
     print(
         f"{_pad(t('col_name'), name_w)}  {_pad(t('col_kind'), kind_w)}  "
         f"{_pad(t('col_source'), source_w)}  {_pad(t('col_version'), version_w)}  {t('col_desc')}"
     )
     print("-" * min(term_width, prefix_w + 20))
-    for h, kind, source, version in zip(rows, kinds, sources, display_versions):
+    for h, icon, source, version_field in zip(rows, icons, sources, version_fields):
         name_field = _pad(h["name"], name_w)
-        prefix = ""
         if h["name"] in installed:
             name_field = _bold(name_field)  # _pad()로 폭을 먼저 맞춘 뒤에 감싸야 함
-            prefix = "★ "
-        # prefix도 desc_budget 안에서 같이 자리를 쓰게 — 안 그러면 뒤에 덧붙이는 순간
-        # 폭 계산이 틀어져서 다시 줄바꿈이 생김
-        desc = prefix + _truncate_to_width(h["desc"] or "", desc_budget - _display_width(prefix))
-        print(f"{name_field}  {_pad(kind, kind_w)}  {_pad(source, source_w)}  {_pad(version, version_w)}  {desc}")
+        desc = _truncate_to_width(h["desc"] or "", desc_budget)
+        print(
+            f"{name_field}  {_pad(icon, kind_w)}  {_pad(source, source_w)}  "
+            f"{_pad(version_field, version_w)}  {desc}"
+        )
 
     print()
     print(t("install_hint"))
+    legend = []
+    if any_star:
+        legend.append(f"{_sym('★', '*')} 이미 설치됨")
+    if any_legacy:
+        legend.append(f"{_sym('▼', 'v')} 이 macOS에 맞춘 대체판 — 자세히: jige info <이름>")
+    if legend:
+        print("  " + " / ".join(legend))
 
 
 def fetch_mas_recipe(token: str, allow_mas: bool) -> dict | None:
@@ -1058,6 +1099,20 @@ def cmd_info(token: str) -> None:
     if recipe.get("desc"):
         print(f"설명       : {recipe['desc']}")
 
+    # search에선 ▼ 기호만 보이고 자세한 내용(최신판 요구치/EOL 여부/근거/신뢰도)은
+    # 여기로 몰아둠 — 피드백: search 결과 한 줄에 다 욱여넣으면 읽기 힘들다고 함.
+    legacy = pick_legacy_for_this_mac(token)
+    if legacy:
+        print()
+        status = "벤더가 EOL(지원 종료) 선언함" if legacy.get("vendor_status") == "eol" else "단순 OS 지원 한계(벤더 EOL 선언은 아님)"
+        print(f"대체판     : {legacy['version']} (이 Mac macOS {legacy['min_macos']}~{legacy['max_macos']} 지원)")
+        print(f"필요한 이유 : 최신판은 macOS {legacy['latest_min_macos']} 이상 필요 — {status}")
+        print(f"신뢰도     : {trust_label(legacy)}")
+        if legacy.get("note"):
+            print(f"근거       : {legacy['note']}")
+        for src in legacy.get("source", []):
+            print(f"            {src}")
+
 
 def cmd_list() -> None:
     state = load_state()
@@ -1192,7 +1247,16 @@ def main() -> None:
         help="이 macOS에 안 맞을 수 있어도 묻지 않고 최신판으로 강행 (recipes/legacy/ 큐레이션 무시)"
     )
 
-    p_search = sub.add_parser("search", help=t("help_search"))
+    p_search = sub.add_parser(
+        "search", help=t("help_search"),
+        description=(
+            t("help_search") + "\n\n"
+            "결과의 기호: "
+            f"{kind_icon('jim')} GUI 앱(jim)  {kind_icon('dogu')} CLI 도구(dogu)  "
+            f"{_sym('★', '*')} 이미 설치됨  {_sym('▼', 'v')} 이 macOS에 맞춘 대체판"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p_search.add_argument("query")
     p_search.add_argument(
         "--mas", action="store_true",

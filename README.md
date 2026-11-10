@@ -36,13 +36,15 @@ Formula는 전부 `dogu`로 확실하게 분류되고, MacPorts 쪽은 아직 `u
 
 ```console
 $ jige search hop
-이름                     종류      분류                버전            설명
---------------------------------------------------------------------------------------
-hop                    jim       Homebrew          0.5.2         View and edit HWP documents
-hopper-disassembler    jim       Homebrew          6.6.2         Reverse engineering tool...
-hopenpgp-tools         dogu      Homebrew          0.26.1        Command-line tools for OpenPGP...
+이름                   종류  분류  버전      설명
+-----------------------------------------------------------------
+hop                    💻    brew  ★ 0.5.1  View and edit HWP documents
+hopper-disassembler    💻    brew  6.6.2     Reverse engineering tool that lets you disassemble...
+hopenpgp-tools         🔧    brew  0.26.1    Command-line tools for OpenPGP-related operations...
 
-설치: jige install <이름>  (Homebrew(Cask) 항목은 지금 바로 설치 지원 — 나머지는 다음 단계에서 연결)
+설치: jige install <이름>
+      (Homebrew Cask는 지금 설치 가능, 나머지는 추후 지원)
+  ★ 이미 설치됨
 
 $ jige install hop
 macOS 코드네임: monterey / 아키텍처: x86_64
@@ -56,14 +58,32 @@ sha256 체크섬 일치 확인됨.
 
 $ jige search hop --mas          # Mac App Store까지 이번만 포함
 ...
-Hop - Endless Arcade Hopper  jim  Mac App Store     1.6           Limitless LLC
+Hop - Endless Arcade Hopper  💻  mas   1.6       Limitless LLC
 
 $ jige install "아스팔트: 레전드" --mas
 레시피: 아스팔트: 레전드 (Mac App Store, 등록 버전 53.5.3)
 mas install 1491129197 실행 중...
 완료: 아스팔트: 레전드 (Mac App Store, id 1491129197, 버전 53.5.3)
 
-$ jige install virtualbox          # macOS Monterey에서 — 최신 7.2.22는 Ventura(13) 이상이 필요
+$ jige search virtualbox          # macOS Monterey에서 — 최신 7.2.22는 Ventura(13) 이상이 필요
+이름             종류  분류  버전         설명
+--------------------------------------------------------------
+virtualbox       💻    brew  ▼🆕 7.1.18  Virtualiser for arm64 hardware
+virtualbox@6     💻    brew  6.1.50       Virtualiser for x86 hardware
+
+설치: jige install <이름>
+      (Homebrew Cask는 지금 설치 가능, 나머지는 추후 지원)
+  ▼ 이 macOS에 맞춘 대체판 — 자세히: jige info <이름>
+
+$ jige info virtualbox            # ▼가 뜬 이유·근거 자료는 search가 아니라 여기서
+이름       : Oracle VirtualBox
+...
+대체판     : 7.1.18 (이 Mac macOS 11~14 지원)
+필요한 이유 : 최신판은 macOS 13 이상 필요 — 벤더가 EOL(지원 종료) 선언함
+신뢰도     : 🆕 방금 등록됨 (공식 문서로 확인, 다른 사용자 확인 아직 없음)
+근거       : (...) https://docs.oracle.com/...
+
+$ jige install virtualbox
 macOS 코드네임: monterey / 아키텍처: x86_64
 레시피: ['Oracle VirtualBox'] (Homebrew-Cask 공개 레시피, 등록 버전 7.2.22,175245)
 
@@ -76,6 +96,11 @@ macOS 코드네임: monterey / 아키텍처: x86_64
 ...
 관리자 권한(sudo)이 필요합니다 — 비밀번호를 입력하세요.
 ```
+
+`search` 결과의 기호: `💻` GUI 앱(jim) · `🔧` CLI 도구(dogu) · `★` 이미 설치됨 · `▼`+신뢰도
+이 macOS에 맞춘 대체판(자세한 이유·근거는 `jige info <이름>`). UTF-8을 지원 안 하는 터미널에선
+자동으로 `GUI`/`CLI`/`*`/`v` 같은 ASCII로 바뀝니다. `분류` 칸은 실제 명령어 이름을 그대로 씀
+(Homebrew는 `brew`, MacPorts는 `port`, Mac App Store는 `mas`).
 
 사용자는 brew가 있는지, MacPorts인지, 어떤 아키텍처인지 몰라도 됩니다 —
 `jige`가 이 기기(`sw_vers`/`uname -m`)에 맞춰 알아서 맞는 파일을 찾습니다.
