@@ -245,10 +245,14 @@
 이름                         종류       분류              버전      설명
 <span class="jim">hop                          jim        Homebrew          0.5.2     View and edit HWP documents</span>
 <span class="jim">hopper-disassembler          jim        Homebrew          6.6.2     Reverse engineering tool...</span>
-<span class="jim">Hop - Endless Arcade Hopper  jim        Mac App Store     1.6       Limitless LLC</span>
 <span class="dogu">hopenpgp-tools               dogu       Homebrew          0.26.1    Command-line tools for OpenPGP...</span>
 
-<span class="p">$</span> jige install "아스팔트: 레전드"
+<span class="c">(Mac App Store는 기본 꺼짐 — brew만 쓰는 사람한테 매번 Apple 서버 호출은 낭비라서)</span>
+
+<span class="p">$</span> jige search hop <span class="dogu">--mas</span>
+<span class="jim">Hop - Endless Arcade Hopper  jim        Mac App Store     1.6       Limitless LLC</span>
+
+<span class="p">$</span> jige install "아스팔트: 레전드" <span class="dogu">--mas</span>
 <span class="c">레시피: 아스팔트: 레전드 (Mac App Store, 등록 버전 53.5.3)
 mas install 1491129197 실행 중...</span>
 완료: 아스팔트: 레전드 (Mac App Store, id 1491129197, 버전 53.5.3)</pre>
@@ -268,6 +272,7 @@ mas install 1491129197 실행 중...</span>
       <tr><td><code>jige info &lt;이름&gt;</code></td><td><code>brew info</code></td><td><code>port info</code></td></tr>
       <tr><td><code>jige upgrade [이름]</code></td><td><code>brew upgrade</code></td><td><code>port upgrade</code></td></tr>
       <tr><td><code>jige list</code></td><td><code>brew list</code></td><td><code>port installed</code></td></tr>
+      <tr><td><code>jige config mas on|off</code></td><td>—</td><td>—</td></tr>
       <tr><td><code>jige uninstall &lt;이름&gt;</code></td><td><code>brew uninstall</code></td><td><code>port uninstall</code></td></tr>
     </table>
   </div>

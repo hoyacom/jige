@@ -44,6 +44,7 @@ CACHE_DIR = Path.home() / "Library" / "Caches" / "jige" / "downloads"
 INDEX_CACHE_DIR = Path.home() / "Library" / "Caches" / "jige" / "index"
 INDEX_MAX_AGE_SECONDS = 24 * 3600
 STATE_FILE = Path.home() / "Library" / "Application Support" / "jige" / "installed.json"
+CONFIG_FILE = Path.home() / "Library" / "Application Support" / "jige" / "config.json"
 
 HOMEBREW_CASK_API = "https://formulae.brew.sh/api/cask/{token}.json"
 HOMEBREW_BULK_API = "https://formulae.brew.sh/api/{kind}.json"  # kind: cask | formula
@@ -201,10 +202,10 @@ def search_macports(query: str) -> list[dict]:
     return hits
 
 
-def search_mas(query: str) -> list[dict]:
-    # mas를 따로 설치한 사람만 Mac App Store까지 뒤짐 — brew/macports만 쓰는
-    # 사람한테는 매번 검색마다 Apple 서버에 공짜로 쏘는 게 낭비라 기본은 끔.
-    if current_os() != "macos" or not shutil.which("mas"):
+def search_mas(query: str, allow_mas: bool) -> list[dict]:
+    # 옛 Homebrew-Cask가 별도 tap이었던 것처럼, mas는 설치돼 있어도 기본은 꺼짐.
+    # 'jige config mas on'으로 켜거나 그때그때 --mas를 줘야 참여함.
+    if not allow_mas or current_os() != "macos" or not shutil.which("mas"):
         return []
     try:
         params = urllib.parse.urlencode(
@@ -255,13 +256,16 @@ def search_local_recipes(query: str) -> list[dict]:
     return hits
 
 
-def cmd_search(query: str, limit_per_source: int = 8) -> None:
+def cmd_search(query: str, limit_per_source: int = 8, mas: bool = False) -> None:
+    allow_mas = mas_enabled() or mas
     all_hits = (
         search_local_recipes(query) + search_macports(query)
-        + search_mas(query) + search_homebrew(query)
+        + search_mas(query, allow_mas) + search_homebrew(query)
     )
     if not all_hits:
         print(f"'{query}' 검색 결과 없음 (Homebrew / MacPorts / 자체 레포지토리 전부).")
+        if not allow_mas:
+            print("(Mac App Store는 안 뒤짐 — 포함하려면 'jige search ... --mas' 또는 'jige config mas on')")
         return
 
     by_source: dict[str, list[dict]] = {}
@@ -285,10 +289,10 @@ def cmd_search(query: str, limit_per_source: int = 8) -> None:
     print("설치: jige install <이름>  (Homebrew(Cask) 항목만 지금 바로 자동 설치 지원 — 나머지는 다음 단계에서 연결)")
 
 
-def fetch_mas_recipe(token: str) -> dict | None:
+def fetch_mas_recipe(token: str, allow_mas: bool) -> dict | None:
     """App Store 앱 이름으로 정확히 일치하는 걸 찾아서 (mas install이 쓸 숫자 id 포함) 반환.
-    mas가 설치돼있지 않으면 애초에 설치도 못 하니 조회 자체를 건너뜀."""
-    if current_os() != "macos" or not shutil.which("mas"):
+    mas가 꺼져있거나 설치 안 돼 있으면 조회 자체를 건너뜀."""
+    if not allow_mas or current_os() != "macos" or not shutil.which("mas"):
         return None
     try:
         params = urllib.parse.urlencode(
@@ -311,7 +315,7 @@ def fetch_mas_recipe(token: str) -> dict | None:
     return None
 
 
-def fetch_recipe(token: str) -> tuple[dict, str]:
+def fetch_recipe(token: str, allow_mas: bool = False) -> tuple[dict, str]:
     """(레시피, 출처설명) 반환. 로컬 recipes/ -> Homebrew-Cask -> Mac App Store 순으로 찾음."""
     local_path = LOCAL_RECIPES_DIR / f"{token}.json"
     if local_path.exists():
@@ -325,14 +329,16 @@ def fetch_recipe(token: str) -> tuple[dict, str]:
         if e.code != 404:
             raise
 
-    mas_recipe = fetch_mas_recipe(token)
+    mas_recipe = fetch_mas_recipe(token, allow_mas)
     if mas_recipe:
         return mas_recipe, "Mac App Store"
 
-    sys.exit(
-        f"'{token}'는 Homebrew-Cask·Mac App Store·로컬 recipes/ 어디에도 없습니다.\n"
-        f"-> recipes/{token}.json 을 같은 스키마로 직접 추가하면 설치할 수 있습니다."
-    )
+    hint = (
+        "recipes/{0}.json 을 같은 스키마로 직접 추가하면 설치할 수 있습니다."
+        if allow_mas or mas_enabled() else
+        "Mac App Store는 안 뒤져봤습니다 — 'jige install {0} --mas' 또는 'jige config mas on'으로 켜보세요."
+    ).format(token)
+    sys.exit(f"'{token}'는 Homebrew-Cask·로컬 recipes/ 어디에도 없습니다.\n-> {hint}")
 
 
 def pick_url_sha(recipe: dict, cpu: str, codename: str) -> tuple[str, str]:
@@ -411,6 +417,45 @@ def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2))
 
 
+def load_config() -> dict:
+    if not CONFIG_FILE.exists():
+        return {}
+    try:
+        return json.loads(CONFIG_FILE.read_text())
+    except json.JSONDecodeError:
+        return {}
+
+
+def save_config(config: dict) -> None:
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps(config, ensure_ascii=False, indent=2))
+
+
+def mas_enabled() -> bool:
+    """mas는 설치돼 있어도 기본은 꺼짐 — 옛 Homebrew-Cask가 별도 tap이었던 것과 같은 자세.
+    'jige config mas on'으로 명시적으로 켜야 search/install에 참여함."""
+    return load_config().get("mas_enabled", False)
+
+
+def cmd_config(key: str | None, value: str | None) -> None:
+    config = load_config()
+    if key is None:
+        print(f"mas_enabled = {config.get('mas_enabled', False)} (mas 검색/설치 참여 여부, 기본 False)")
+        return
+
+    if key == "mas":
+        if value not in ("on", "off"):
+            sys.exit("사용법: jige config mas on|off")
+        config["mas_enabled"] = (value == "on")
+        save_config(config)
+        print(f"mas_enabled = {config['mas_enabled']}")
+        if config["mas_enabled"] and not shutil.which("mas"):
+            print("(참고: mas CLI가 아직 설치 안 돼 있음 — 설치 전까진 검색에도 안 끼어듦)")
+        return
+
+    sys.exit(f"알 수 없는 설정: {key} (지금은 'mas'만 있음)")
+
+
 def install_via_mas(token: str, recipe: dict) -> None:
     """mas install <id>를 그대로 호출. 실제 다운로드·인증은 로그인된 App Store 세션이 처리."""
     mas_id = recipe["_mas_id"]
@@ -434,12 +479,12 @@ def install_via_mas(token: str, recipe: dict) -> None:
     print(f"완료: {token} (Mac App Store, id {mas_id}, 버전 {recipe.get('version')})")
 
 
-def cmd_install(token: str) -> None:
+def cmd_install(token: str, mas: bool = False) -> None:
     codename = sw_vers_codename()
     cpu = arch()
     print(f"macOS 코드네임: {codename} / 아키텍처: {cpu}")
 
-    recipe, source = fetch_recipe(token)
+    recipe, source = fetch_recipe(token, allow_mas=mas_enabled() or mas)
     print(f"레시피: {recipe.get('name')} ({source}, 등록 버전 {recipe.get('version')})")
 
     if "_mas_id" in recipe:
@@ -611,9 +656,17 @@ def main() -> None:
 
     p_install = sub.add_parser("install", help="앱 설치/업데이트 (brew install / port install)")
     p_install.add_argument("token")
+    p_install.add_argument(
+        "--mas", action="store_true",
+        help="이번 한 번만 Mac App Store도 뒤짐 ('jige config mas on' 없이 일회성으로 켜는 옵션)"
+    )
 
     p_search = sub.add_parser("search", help="통합 검색 (brew search / port search)")
     p_search.add_argument("query")
+    p_search.add_argument(
+        "--mas", action="store_true",
+        help="이번 한 번만 Mac App Store도 뒤짐 ('jige config mas on' 없이 일회성으로 켜는 옵션)"
+    )
 
     p_info = sub.add_parser("info", help="상세 정보, 설치 안 함 (brew info / port info)")
     p_info.add_argument("token")
@@ -634,11 +687,17 @@ def main() -> None:
 
     sub.add_parser("update", help="jige 자체를 최신 코드로 갱신 (brew update / port selfupdate)")
 
+    p_config = sub.add_parser("config", help="jige 설정 보기/변경 (예: Mac App Store 켜기/끄기)")
+    p_config.add_argument("key", nargs="?", default=None)
+    p_config.add_argument("value", nargs="?", default=None)
+
     args = parser.parse_args()
     if args.command == "install":
-        cmd_install(args.token)
+        cmd_install(args.token, mas=args.mas)
     elif args.command == "search":
-        cmd_search(args.query)
+        cmd_search(args.query, mas=args.mas)
+    elif args.command == "config":
+        cmd_config(args.key, args.value)
     elif args.command == "info":
         cmd_info(args.token)
     elif args.command in ("uninstall", "remove"):

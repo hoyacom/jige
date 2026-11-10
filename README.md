@@ -42,10 +42,9 @@ $ jige search hop
 --------------------------------------------------------------------------------------
 hop                    jim       Homebrew          0.5.2         View and edit HWP documents
 hopper-disassembler    jim       Homebrew          6.6.2         Reverse engineering tool...
-Hop - Endless Arcade Hopper  jim  Mac App Store     1.6           Limitless LLC
 hopenpgp-tools         dogu      Homebrew          0.26.1        Command-line tools for OpenPGP...
 
-설치: jige install <이름>  (Homebrew(Cask)·Mac App Store 항목은 지금 바로 설치 지원 — 나머지는 다음 단계에서 연결)
+설치: jige install <이름>  (Homebrew(Cask) 항목은 지금 바로 설치 지원 — 나머지는 다음 단계에서 연결)
 
 $ jige install hop
 macOS 코드네임: monterey / 아키텍처: x86_64
@@ -57,7 +56,11 @@ sha256 체크섬 일치 확인됨.
 
 완료: HOP.app  0.3.1 -> 0.5.2
 
-$ jige install "아스팔트: 레전드"
+$ jige search hop --mas          # Mac App Store까지 이번만 포함
+...
+Hop - Endless Arcade Hopper  jim  Mac App Store     1.6           Limitless LLC
+
+$ jige install "아스팔트: 레전드" --mas
 레시피: 아스팔트: 레전드 (Mac App Store, 등록 버전 53.5.3)
 mas install 1491129197 실행 중...
 완료: 아스팔트: 레전드 (Mac App Store, id 1491129197, 버전 53.5.3)
@@ -75,6 +78,7 @@ mas install 1491129197 실행 중...
 | `jige info <이름>` | `brew info` | `port info` |
 | `jige upgrade [이름]` | `brew upgrade` | `port upgrade` |
 | `jige list` (별칭 `installed`) | `brew list` | `port installed` |
+| `jige config mas on\|off` | — (jige 전용, Mac App Store 검색/설치 on/off) | — |
 | `jige uninstall <이름>` (별칭 `remove`) | `brew uninstall`/`remove` | `port uninstall` |
 
 ### search는 어디를 뒤지나
@@ -84,6 +88,10 @@ mas install 1491129197 실행 중...
 2. **MacPorts** — `ports.macports.org`의 공개 검색 API(macOS에서만).
 3. **Mac App Store** — `mas`가 내부적으로 쓰는 것과 같은 Apple의 공개 iTunes Search API(macOS에서만).
    `mas install`이 요구하는 숫자 ID를 몰라도, 앱 이름 그대로 검색·설치하면 됩니다.
+   **기본은 꺼져 있습니다** (옛 Homebrew-Cask가 별도 tap이었던 것과 같은 자세 — mas를 안 쓰는
+   사람한테 매번 검색마다 Apple 서버에 쏘는 건 낭비라서). 켜는 방법 둘:
+   - `jige search <검색어> --mas` / `jige install <이름> --mas` — 이번 한 번만
+   - `jige config mas on` — 계속 켜두기 (`jige config`로 현재 상태 확인, `off`로 다시 끔)
 4. **자체 레포지토리** — 이 저장소의 `recipes/*.json`.
 
 **넷 다 그냥 공개 HTTP API라서, 이 기기에 brew·port·mas가 전혀 없어도 검색은 됩니다**
