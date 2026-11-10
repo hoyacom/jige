@@ -451,9 +451,13 @@ def search_homebrew(query: str) -> list[dict]:
             rank = _rank(query, token, display_name, desc)
             if rank < 999:
                 if kind == "cask" and (legacy := pick_legacy_for_this_mac(token)):
+                    # version 칸은 고정폭(<12)으로 테이블 정렬을 맞추고 있어서, 여기에 긴
+                    # 한글 설명을 붙이면 칸이 깨짐(터미널에서 한글은 2칸 차지라 더 심해짐) —
+                    # 짧은 버전 번호만 넣고, 나머지 설명은 폭 제한 없는 맨 끝 desc 칸으로.
                     tag = "EOL" if legacy.get("vendor_status") == "eol" else "OS지원한계"
-                    version = f"{legacy['version']} (최신 {version}는 macOS {legacy['latest_min_macos']}+ 필요)"
-                    desc = f"[{tag} {trust_badge(legacy)}] {desc}"
+                    latest_short = version.split(",")[0]  # 빌드번호(",175245" 등) 빼고 간단히
+                    desc = f"[{tag} {trust_badge(legacy)}, 최신 {latest_short}은 macOS {legacy['latest_min_macos']}+] {desc}"
+                    version = legacy["version"]
                 hits.append({
                     "name": token,
                     "version": version,
@@ -572,7 +576,7 @@ def cmd_search(query: str, limit_per_source: int = 8, mas: bool = False) -> None
     print(f"{t('col_name'):<{name_w}}  {t('col_kind'):<8}  {t('col_source'):<16}  {t('col_version'):<12}  {t('col_desc')}")
     print("-" * (name_w + 8 + 16 + 12 + 40))
     for h in rows:
-        desc = (h["desc"] or "")[:60]
+        desc = (h["desc"] or "")[:90]
         print(f"{h['name']:<{name_w}}  {h['kind']:<8}  {SOURCE_LABEL[h['source']]:<16}  {h['version']:<12}  {desc}")
 
     print()
