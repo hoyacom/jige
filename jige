@@ -445,6 +445,23 @@ def cmd_uninstall(token: str, zap: bool = False) -> None:
     print(f"완료: {token} 제거(휴지통행, 영구삭제 아님)")
 
 
+def cmd_update() -> None:
+    """jige 자체 갱신 (brew update / port selfupdate와 같은 역할 — upgrade는 '설치된 앱'용)."""
+    if not (REPO_ROOT / ".git").exists():
+        sys.exit(f"{REPO_ROOT}가 git 저장소가 아님 — install.sh로 받은 설치가 아닌 듯함")
+    before = subprocess.check_output(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"], text=True
+    ).strip()
+    subprocess.run(["git", "-C", str(REPO_ROOT), "pull", "--ff-only"], check=True)
+    after = subprocess.check_output(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"], text=True
+    ).strip()
+    if before == after:
+        print(f"jige는 이미 최신 상태입니다 ({before}).")
+    else:
+        print(f"jige 갱신됨: {before} -> {after}")
+
+
 def cmd_upgrade(token: str | None) -> None:
     if token:
         cmd_install(token)
@@ -489,8 +506,10 @@ def main() -> None:
 
     sub.add_parser("list", aliases=["installed"], help="jige로 설치한 목록 (brew list / port installed)")
 
-    p_upgrade = sub.add_parser("upgrade", help="최신판으로 재설치 (brew upgrade / port upgrade)")
+    p_upgrade = sub.add_parser("upgrade", help="설치된 앱 최신판으로 재설치 (brew upgrade / port upgrade)")
     p_upgrade.add_argument("token", nargs="?", default=None, help="생략하면 설치된 전체 업그레이드")
+
+    sub.add_parser("update", help="jige 자체를 최신 코드로 갱신 (brew update / port selfupdate)")
 
     args = parser.parse_args()
     if args.command == "install":
@@ -505,6 +524,8 @@ def main() -> None:
         cmd_list()
     elif args.command == "upgrade":
         cmd_upgrade(args.token)
+    elif args.command == "update":
+        cmd_update()
 
 
 if __name__ == "__main__":
