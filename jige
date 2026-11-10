@@ -48,11 +48,13 @@ STATE_FILE = Path.home() / "Library" / "Application Support" / "jige" / "install
 HOMEBREW_CASK_API = "https://formulae.brew.sh/api/cask/{token}.json"
 HOMEBREW_BULK_API = "https://formulae.brew.sh/api/{kind}.json"  # kind: cask | formula
 MACPORTS_SEARCH_API = "https://ports.macports.org/api/v1/ports/"
+ITUNES_SEARCH_API = "https://itunes.apple.com/search"  # mas가 내부적으로 쓰는 것과 같은 공개 API
 
 SOURCE_LABEL = {
     "homebrew-cask": "Homebrew(Cask)",
     "homebrew-formula": "Homebrew(CLI)",
     "macports": "MacPorts",
+    "mas": "Mac App Store",
     "local": "자체 레포지토리",
 }
 
@@ -172,6 +174,33 @@ def search_macports(query: str) -> list[dict]:
     return hits
 
 
+def search_mas(query: str) -> list[dict]:
+    if current_os() != "macos":
+        return []
+    try:
+        params = urllib.parse.urlencode(
+            {"media": "software", "entity": "macSoftware", "term": query, "limit": 15}
+        )
+        with urllib.request.urlopen(f"{ITUNES_SEARCH_API}?{params}", timeout=10) as r:
+            data = json.load(r)
+    except Exception as e:
+        print(f"Mac App Store 검색 실패(무시하고 계속): {e}", file=sys.stderr)
+        return []
+    hits = []
+    for entry in data.get("results", []):
+        name = entry.get("trackName", "")
+        rank = _rank(query, name)
+        hits.append({
+            "name": name,
+            "version": entry.get("version", "?"),
+            "desc": entry.get("sellerName", ""),
+            "source": "mas",
+            "kind": "jim",  # mas는 전부 GUI 앱
+            "rank": rank,
+        })
+    return hits
+
+
 def search_local_recipes(query: str) -> list[dict]:
     hits = []
     if not LOCAL_RECIPES_DIR.exists():
@@ -198,7 +227,10 @@ def search_local_recipes(query: str) -> list[dict]:
 
 
 def cmd_search(query: str, limit_per_source: int = 8) -> None:
-    all_hits = search_local_recipes(query) + search_macports(query) + search_homebrew(query)
+    all_hits = (
+        search_local_recipes(query) + search_macports(query)
+        + search_mas(query) + search_homebrew(query)
+    )
     if not all_hits:
         print(f"'{query}' 검색 결과 없음 (Homebrew / MacPorts / 자체 레포지토리 전부).")
         return
@@ -224,8 +256,32 @@ def cmd_search(query: str, limit_per_source: int = 8) -> None:
     print("설치: jige install <이름>  (Homebrew(Cask) 항목만 지금 바로 자동 설치 지원 — 나머지는 다음 단계에서 연결)")
 
 
+def fetch_mas_recipe(token: str) -> dict | None:
+    """App Store 앱 이름으로 정확히 일치하는 걸 찾아서 (mas install이 쓸 숫자 id 포함) 반환."""
+    if current_os() != "macos":
+        return None
+    try:
+        params = urllib.parse.urlencode(
+            {"media": "software", "entity": "macSoftware", "term": token, "limit": 25}
+        )
+        with urllib.request.urlopen(f"{ITUNES_SEARCH_API}?{params}", timeout=10) as r:
+            data = json.load(r)
+    except Exception:
+        return None
+    for entry in data.get("results", []):
+        if entry.get("trackName", "").lower() == token.lower():
+            return {
+                "name": [entry["trackName"]],
+                "version": entry.get("version", "?"),
+                "homepage": entry.get("trackViewUrl"),
+                "desc": entry.get("sellerName", ""),
+                "_mas_id": entry["trackId"],
+            }
+    return None
+
+
 def fetch_recipe(token: str) -> tuple[dict, str]:
-    """(레시피, 출처설명) 반환. 로컬 recipes/ 우선, 없으면 Homebrew-Cask API."""
+    """(레시피, 출처설명) 반환. 로컬 recipes/ -> Homebrew-Cask -> Mac App Store 순으로 찾음."""
     local_path = LOCAL_RECIPES_DIR / f"{token}.json"
     if local_path.exists():
         return json.loads(local_path.read_text()), f"로컬 레시피 ({local_path})"
@@ -235,12 +291,17 @@ def fetch_recipe(token: str) -> tuple[dict, str]:
         with urllib.request.urlopen(url, timeout=15) as r:
             return json.load(r), "Homebrew-Cask 공개 레시피"
     except urllib.error.HTTPError as e:
-        if e.code == 404:
-            sys.exit(
-                f"'{token}'는 Homebrew-Cask에도 로컬 recipes/에도 없습니다.\n"
-                f"-> recipes/{token}.json 을 같은 스키마로 직접 추가하면 설치할 수 있습니다."
-            )
-        raise
+        if e.code != 404:
+            raise
+
+    mas_recipe = fetch_mas_recipe(token)
+    if mas_recipe:
+        return mas_recipe, "Mac App Store"
+
+    sys.exit(
+        f"'{token}'는 Homebrew-Cask·Mac App Store·로컬 recipes/ 어디에도 없습니다.\n"
+        f"-> recipes/{token}.json 을 같은 스키마로 직접 추가하면 설치할 수 있습니다."
+    )
 
 
 def pick_url_sha(recipe: dict, cpu: str, codename: str) -> tuple[str, str]:
@@ -319,6 +380,24 @@ def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2))
 
 
+def install_via_mas(token: str, recipe: dict) -> None:
+    """mas install <id>를 그대로 호출. 실제 다운로드·인증은 로그인된 App Store 세션이 처리."""
+    mas_id = recipe["_mas_id"]
+    if not shutil.which("mas"):
+        sys.exit("mas CLI가 없어서 Mac App Store 앱은 설치 못 함 (brew/macports로 mas 설치 필요)")
+    print(f"mas install {mas_id} 실행 중...")
+    subprocess.run(["mas", "install", str(mas_id)], check=True)
+
+    state = load_state()
+    state[token] = {
+        "mas_id": mas_id,
+        "version": recipe.get("version"),
+        "installed_at": datetime.datetime.now().isoformat(timespec="seconds"),
+    }
+    save_state(state)
+    print(f"완료: {token} (Mac App Store, id {mas_id}, 버전 {recipe.get('version')})")
+
+
 def cmd_install(token: str) -> None:
     codename = sw_vers_codename()
     cpu = arch()
@@ -326,6 +405,10 @@ def cmd_install(token: str) -> None:
 
     recipe, source = fetch_recipe(token)
     print(f"레시피: {recipe.get('name')} ({source}, 등록 버전 {recipe.get('version')})")
+
+    if "_mas_id" in recipe:
+        install_via_mas(token, recipe)
+        return
 
     url, sha = pick_url_sha(recipe, cpu, codename)
     print(f"선택된 다운로드: {url}")
