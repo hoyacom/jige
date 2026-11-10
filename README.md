@@ -40,11 +40,12 @@ Formula는 전부 `dogu`로 확실하게 분류되고, MacPorts 쪽은 아직 `u
 $ jige search hop
 이름                     종류      분류                버전            설명
 --------------------------------------------------------------------------------------
-hop                    jim       Homebrew(Cask)    0.5.2         View and edit HWP documents
-hopper-disassembler    jim       Homebrew(Cask)    6.6.2         Reverse engineering tool...
-hopenpgp-tools         dogu      Homebrew(CLI)     0.26.1        Command-line tools for OpenPGP...
+hop                    jim       Homebrew          0.5.2         View and edit HWP documents
+hopper-disassembler    jim       Homebrew          6.6.2         Reverse engineering tool...
+Hop - Endless Arcade Hopper  jim  Mac App Store     1.6           Limitless LLC
+hopenpgp-tools         dogu      Homebrew          0.26.1        Command-line tools for OpenPGP...
 
-설치: jige install <이름>  (Homebrew(Cask) 항목만 지금 바로 자동 설치 지원 — 나머지는 다음 단계에서 연결)
+설치: jige install <이름>  (Homebrew(Cask)·Mac App Store 항목은 지금 바로 설치 지원 — 나머지는 다음 단계에서 연결)
 
 $ jige install hop
 macOS 코드네임: monterey / 아키텍처: x86_64
@@ -55,6 +56,11 @@ sha256 체크섬 일치 확인됨.
 /Volumes/jige-HOP.app/HOP.app -> /Applications/HOP.app
 
 완료: HOP.app  0.3.1 -> 0.5.2
+
+$ jige install "아스팔트: 레전드"
+레시피: 아스팔트: 레전드 (Mac App Store, 등록 버전 53.5.3)
+mas install 1491129197 실행 중...
+완료: 아스팔트: 레전드 (Mac App Store, id 1491129197, 버전 53.5.3)
 ```
 
 사용자는 brew가 있는지, MacPorts인지, 어떤 아키텍처인지 몰라도 됩니다 —
@@ -76,17 +82,26 @@ sha256 체크섬 일치 확인됨.
 1. **Homebrew (Cask/Formula)** — `formulae.brew.sh`의 전체 목록을 로컬에 캐시(24시간)해서
    이름·설명으로 찾음. macOS/Linux 둘 다 커버.
 2. **MacPorts** — `ports.macports.org`의 공개 검색 API(macOS에서만).
-3. **자체 레포지토리** — 이 저장소의 `recipes/*.json`.
+3. **Mac App Store** — `mas`가 내부적으로 쓰는 것과 같은 Apple의 공개 iTunes Search API(macOS에서만).
+   `mas install`이 요구하는 숫자 ID를 몰라도, 앱 이름 그대로 검색·설치하면 됩니다.
+4. **자체 레포지토리** — 이 저장소의 `recipes/*.json`.
 
-**셋 다 그냥 공개 HTTP API라서, 이 기기에 brew나 port가 전혀 없어도 검색은 됩니다.**
+**넷 다 그냥 공개 HTTP API라서, 이 기기에 brew·port·mas가 전혀 없어도 검색은 됩니다**
+(단, mas 쪽은 검색은 API로 하지만 실제 *설치*는 `mas` CLI와 로그인된 App Store 세션이 있어야 함).
 
 ### install은 어떻게 동작하나
 
+**Homebrew-Cask·자체 레포지토리(jim)**:
 1. `recipes/<token>.json`이 있으면 그걸, 없으면 Homebrew-Cask의 공개 레시피를 읽음
 2. 이 기기의 macOS 코드네임·CPU 아키텍처에 맞는 다운로드 URL·sha256을 레시피에서 고름
 3. 다운로드(`~/Library/Caches/jige/downloads/`에 캐시) 후 sha256 검증
 4. DMG를 마운트해서 `.app`을 `/Applications`로 복사, 마운트 해제
 5. `~/Library/Application Support/jige/installed.json`에 설치 기록 남김 (`list`/`upgrade`가 이걸 씀)
+
+**Mac App Store**:
+1. Homebrew-Cask에 없으면 iTunes Search API에서 이름이 정확히 일치하는 앱을 찾아 숫자 ID를 얻음
+2. 그 ID로 `mas install <id>`를 그대로 호출 — 다운로드·인증은 로그인된 App Store 세션이 처리
+   (비밀번호/Touch ID는 전부 macOS 시스템 UI가 처리, jige·mas 둘 다 credential을 다루지 않음)
 
 ## 왜 만들었나
 
@@ -104,7 +119,7 @@ Mac이 여러 대(Apple Silicon, Intel+Homebrew, Intel+MacPorts)인데, 전부 H
 
 ## 현재 범위 / 다음에 할 일
 
-- `install`은 아직 DMG 안에 `.app`이 바로 들어있는 **Homebrew-Cask 항목만** 설치합니다.
+- `install`은 DMG 안에 `.app`이 바로 들어있는 **Homebrew-Cask·Mac App Store·자체 레포지토리** 항목을 설치합니다.
 - `search`로 나온 **MacPorts/Homebrew(CLI) 결과는 아직 jige가 직접 설치 안 함** — 각 패키지
   매니저 자체 기능을 그대로 쓰는 쪽(예: `sudo port install`)으로 다음에 연결할 계획.
 - Linux는 Ubuntu(`apt`)·RedHat 계열(`dnf`)까지만 지원 범위로 다음에 추가합니다.

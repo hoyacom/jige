@@ -213,24 +213,23 @@
 <section>
   <div class="wrap">
     <h2>한 번에 검색, 한 번에 설치</h2>
-    <p class="lead">Homebrew(Cask/Formula) + MacPorts + 자체 레포지토리를 동시에 뒤져서
-    어디 소속인지 분류까지 보여줍니다. 전부 공개 HTTP API라서, 이 기기에 brew나 port가
-    전혀 없어도 검색·설치가 됩니다.</p>
+    <p class="lead">Homebrew(Cask/Formula) + MacPorts + Mac App Store + 자체 레포지토리를 동시에
+    뒤져서 어디 소속인지 분류까지 보여줍니다. 전부 공개 HTTP API라서, 이 기기에 brew·port·mas가
+    전혀 없어도 검색이 됩니다. Mac App Store 앱도 숫자 ID 몰라도 이름 그대로 설치됩니다.</p>
 
     <div class="terminal">
       <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span></div>
       <pre><span class="p">$</span> jige search hop
-이름                 종류       분류                버전      설명
-<span class="jim">hop                  jim        Homebrew(Cask)      0.5.2     View and edit HWP documents</span>
-<span class="jim">hopper-disassembler  jim        Homebrew(Cask)      6.6.2     Reverse engineering tool...</span>
-<span class="dogu">hopenpgp-tools       dogu       Homebrew(CLI)       0.26.1    Command-line tools for OpenPGP...</span>
+이름                         종류       분류              버전      설명
+<span class="jim">hop                          jim        Homebrew          0.5.2     View and edit HWP documents</span>
+<span class="jim">hopper-disassembler          jim        Homebrew          6.6.2     Reverse engineering tool...</span>
+<span class="jim">Hop - Endless Arcade Hopper  jim        Mac App Store     1.6       Limitless LLC</span>
+<span class="dogu">hopenpgp-tools               dogu       Homebrew          0.26.1    Command-line tools for OpenPGP...</span>
 
-<span class="p">$</span> jige install hop
-<span class="c">macOS 코드네임: monterey / 아키텍처: x86_64
-레시피: HOP (Homebrew-Cask 공개 레시피, 등록 버전 0.5.2)
-선택된 다운로드: .../HOP-macos-x64.dmg
-sha256 체크섬 일치 확인됨.</span>
-완료: HOP.app  0.3.1 -&gt; 0.5.2</pre>
+<span class="p">$</span> jige install "아스팔트: 레전드"
+<span class="c">레시피: 아스팔트: 레전드 (Mac App Store, 등록 버전 53.5.3)
+mas install 1491129197 실행 중...</span>
+완료: 아스팔트: 레전드 (Mac App Store, id 1491129197, 버전 53.5.3)</pre>
     </div>
   </div>
 </section>
