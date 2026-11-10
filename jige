@@ -388,15 +388,29 @@ def cmd_list() -> None:
         print(f"{token:<{name_w}}  {info.get('version', '?'):<14}  {info.get('installed_at', '?')}")
 
 
-def cmd_uninstall(token: str) -> None:
+def move_to_trash(path: Path) -> Path:
+    """brew와 같은 방식: 영구삭제 대신 휴지통행. 이름 겹치면 타임스탬프 붙임."""
+    trash = Path.home() / ".Trash"
+    trash.mkdir(exist_ok=True)
+    dest = trash / path.name
+    if dest.exists():
+        dest = trash / f"{path.stem}-{int(time.time())}{path.suffix}"
+    shutil.move(str(path), str(dest))
+    return dest
+
+
+def cmd_uninstall(token: str, zap: bool = False) -> None:
     state = load_state()
     app_name = (state.get(token) or {}).get("app")
-    if not app_name:
+    recipe = None
+    if not app_name or zap:
         # jige로 추적 안 된 설치본이어도, 레시피에서 앱 이름을 추론해 시도
+        # --zap이면 레시피의 zap 목록(부가 파일 경로)도 필요해서 어차피 가져옴
         recipe, _ = fetch_recipe(token)
-        app_name = next(
-            (a["app"][0] for a in recipe.get("artifacts", []) if "app" in a), None
-        )
+        if not app_name:
+            app_name = next(
+                (a["app"][0] for a in recipe.get("artifacts", []) if "app" in a), None
+            )
     if not app_name:
         sys.exit(f"'{token}'의 앱 이름을 찾을 수 없음 — 수동으로 /Applications에서 지워야 함")
 
@@ -404,13 +418,26 @@ def cmd_uninstall(token: str) -> None:
     if not app_path.exists():
         print(f"{app_path} 가 이미 없습니다.")
     else:
-        trash = Path.home() / ".Trash"
-        trash.mkdir(exist_ok=True)
-        dest = trash / app_name
-        if dest.exists():
-            dest = trash / f"{app_path.stem}-{int(time.time())}{app_path.suffix}"
-        shutil.move(str(app_path), str(dest))
+        dest = move_to_trash(app_path)
         print(f"{app_path} -> 휴지통({dest})")
+
+    if zap:
+        # brew uninstall --zap과 동일: 레시피에 적힌 설정/캐시/로그 등 부가 경로까지 정리
+        if recipe is None:
+            recipe, _ = fetch_recipe(token)
+        zap_paths: list[str] = []
+        for artifact in recipe.get("artifacts", []):
+            for zap_entry in artifact.get("zap", []):
+                zap_paths.extend(zap_entry.get("trash", []))
+        if not zap_paths:
+            print("(zap: 이 레시피엔 정리할 부가 경로가 없음)")
+        for raw in zap_paths:
+            p = Path(raw.replace("~", str(Path.home()), 1)) if raw.startswith("~") else Path(raw)
+            if p.exists():
+                dest = move_to_trash(p)
+                print(f"zap: {p} -> 휴지통({dest})")
+            else:
+                print(f"zap: {p} 없음(건너뜀)")
 
     if token in state:
         del state[token]
@@ -455,6 +482,10 @@ def main() -> None:
         "uninstall", aliases=["remove"], help="제거, 휴지통행 (brew uninstall/remove)"
     )
     p_uninstall.add_argument("token")
+    p_uninstall.add_argument(
+        "--zap", action="store_true",
+        help="앱뿐 아니라 설정/캐시/로그 등 부가 파일까지 정리 (brew uninstall --zap과 동일)"
+    )
 
     sub.add_parser("list", aliases=["installed"], help="jige로 설치한 목록 (brew list / port installed)")
 
@@ -469,7 +500,7 @@ def main() -> None:
     elif args.command == "info":
         cmd_info(args.token)
     elif args.command in ("uninstall", "remove"):
-        cmd_uninstall(args.token)
+        cmd_uninstall(args.token, zap=args.zap)
     elif args.command in ("list", "installed"):
         cmd_list()
     elif args.command == "upgrade":
