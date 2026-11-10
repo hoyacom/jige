@@ -38,7 +38,7 @@ Formula는 전부 `dogu`로 확실하게 분류되고, MacPorts 쪽은 아직 `u
 $ jige search hop
 이름                   종류  분류  버전      설명
 -----------------------------------------------------------------
-hop                    💻    brew  ★ 0.5.1  View and edit HWP documents
+hop                    💻    brew  ★0.5.1  View and edit HWP documents
 hopper-disassembler    💻    brew  6.6.2     Reverse engineering tool that lets you disassemble...
 hopenpgp-tools         🔧    brew  0.26.1    Command-line tools for OpenPGP-related operations...
 
@@ -68,7 +68,7 @@ mas install 1491129197 실행 중...
 $ jige search virtualbox          # macOS Monterey에서 — 최신 7.2.22는 Ventura(13) 이상이 필요
 이름             종류  분류  버전         설명
 --------------------------------------------------------------
-virtualbox       💻    brew  ▼🆕 7.1.18  Virtualiser for arm64 hardware
+virtualbox       💻    brew  ▼🆕7.1.18  Virtualiser for arm64 hardware
 virtualbox@6     💻    brew  6.1.50       Virtualiser for x86 hardware
 
 설치: jige install <이름>
