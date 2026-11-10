@@ -78,6 +78,11 @@
   .copy-btn:hover{background:#352f27;}
   .sub-install{margin-top:14px; font-size:13px; color:var(--ink-soft);}
 
+  .jige-photo{margin:40px auto 0; max-width:520px; text-align:center;}
+  .jige-photo img{width:100%; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.18); filter:sepia(.15);}
+  .jige-photo figcaption{margin-top:10px; font-size:12px; color:var(--ink-soft); line-height:1.6;}
+  .jige-photo figcaption .en{display:block; font-style:italic;}
+
   section{padding:56px 0; border-top:1px solid var(--line);}
   h2{font-size:28px; margin:0 0 8px;}
   .lead{color:var(--ink-soft); margin:0 0 28px; max-width:620px;}
@@ -150,6 +155,17 @@
       <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('install-cmd').textContent); this.textContent='복사됨 ✓'; setTimeout(()=>this.textContent='복사',1500)">복사</button>
     </div>
     <p class="sub-install">새 Mac이어도 상관없습니다 — Homebrew도 MacPorts도 설치돼 있을 필요 없습니다.</p>
+
+    <figure class="jige-photo">
+      <img src="https://upload.wikimedia.org/wikipedia/commons/1/12/%28Porter_carrying_clay_pots_strapped_to_A-frame_on_his_back%29_%284095353619%29.jpg"
+           alt="A Korean porter carrying pots on a jige, a traditional A-frame wooden carrier, circa 1904"
+           loading="lazy">
+      <figcaption>
+        지게(A자형 나무 지게)로 짐을 나르는 모습, 1904년경.
+        <span class="en">A jige in use — the traditional Korean A-frame carrier this project is named after. (ca. 1904)</span>
+        <br>Photo: <a href="https://commons.wikimedia.org/wiki/File:(Porter_carrying_clay_pots_strapped_to_A-frame_on_his_back)_(4095353619).jpg">Cornell University Library</a>, no known copyright restrictions.
+      </figcaption>
+    </figure>
   </div>
 </header>
 
@@ -175,10 +191,13 @@
   <div class="wrap">
     <h2>짐(jim)과 도구(dogu)</h2>
     <p class="lead">Homebrew가 설치 대상을 <b>formula</b>(터미널용)와 <b>cask</b>(Dock에 뜨는 GUI 앱)로 나누듯,
-    jige는 OS에 상관없이 똑같은 질문 하나로 나눕니다.</p>
+    jige는 OS에 상관없이 똑같은 질문 하나로 나눕니다.<br>
+    <span style="font-style:italic">Just as Homebrew splits installs into <b>formula</b> (terminal tools) and
+    <b>cask</b> (Dock-visible GUI apps), jige draws the same line with one OS-agnostic question.</span></p>
 
     <div class="question">
       "설치하면 Dock/런처에 아이콘이 생겨서 더블클릭으로 띄우는 독립 프로그램인가?"
+      <br><span style="font-style:italic; font-size:14px">"Does installing it put an icon in the Dock/launcher you double-click to open?"</span>
     </div>
 
     <div class="concept-grid">
@@ -215,7 +234,10 @@
     <h2>한 번에 검색, 한 번에 설치</h2>
     <p class="lead">Homebrew(Cask/Formula) + MacPorts + Mac App Store + 자체 레포지토리를 동시에
     뒤져서 어디 소속인지 분류까지 보여줍니다. 전부 공개 HTTP API라서, 이 기기에 brew·port·mas가
-    전혀 없어도 검색이 됩니다. Mac App Store 앱도 숫자 ID 몰라도 이름 그대로 설치됩니다.</p>
+    전혀 없어도 검색이 됩니다. Mac App Store 앱도 숫자 ID 몰라도 이름 그대로 설치됩니다.<br>
+    <span style="font-style:italic">One search covers Homebrew (Cask/Formula), MacPorts, the Mac App
+    Store, and jige's own repository at once, tagged by source. All plain public HTTP APIs — no
+    brew, port, or mas required just to search. App Store apps install by name, no numeric ID needed.</span></p>
 
     <div class="terminal">
       <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span></div>
@@ -237,7 +259,8 @@ mas install 1491129197 실행 중...</span>
 <section>
   <div class="wrap">
     <h2>명령어</h2>
-    <p class="lead">brew와 port 둘 다 쓰는 이름 그대로 맞췄습니다.</p>
+    <p class="lead">brew와 port 둘 다 쓰는 이름 그대로 맞췄습니다.<br>
+    <span style="font-style:italic">Commands are named to match both brew and port, so either muscle memory works.</span></p>
     <table class="cmd">
       <tr><th>jige</th><th>brew</th><th>port</th></tr>
       <tr><td><code>jige search &lt;검색어&gt;</code></td><td><code>brew search</code></td><td><code>port search</code></td></tr>
@@ -259,6 +282,12 @@ mas install 1491129197 실행 중...</span>
     최신으로 갱신해줍니다. jige는 이 JSON만 HTTP로 읽어서 brew 바이너리 없이 같은 정보를
     활용합니다 — <strong>이미 있는 레포(Homebrew-Cask, MacPorts)는 그대로 래핑</strong>하고,
     <strong>둘 다에 없는 것만</strong> 자체 레포지토리에 직접 추가합니다.</p>
+    <p class="why" style="font-style:italic">
+    Across several Macs (Apple Silicon, Intel+Homebrew, Intel+MacPorts), I didn't want to force
+    Homebrew onto all of them. Homebrew-Cask already publishes a clean, community-maintained JSON
+    API describing exactly what file and checksum each OS/architecture needs — jige just reads
+    that over HTTP, no brew binary required. <strong>Wrap what already exists</strong> (Homebrew-Cask,
+    MacPorts) and <strong>only add to our own repo</strong> what's in neither.</p>
   </div>
 </section>
 
