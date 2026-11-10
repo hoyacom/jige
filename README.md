@@ -23,7 +23,7 @@ brew 바이너리 없이 같은 정보를 활용합니다.
 ## 설치
 
 ```bash
-ln -sf "$(pwd)/bin/jige" /usr/local/bin/jige
+ln -sf "$(pwd)/jige" /usr/local/bin/jige
 ```
 
 ## 사용법
