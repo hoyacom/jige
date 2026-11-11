@@ -66,10 +66,10 @@ mas install 1491129197 실행 중...
 완료: 아스팔트: 레전드 (Mac App Store, id 1491129197, 버전 53.5.3)
 
 $ jige search virtualbox          # macOS Monterey에서 — 최신 7.2.22는 Ventura(13) 이상이 필요
-이름             종류  분류  버전         설명
---------------------------------------------------------------
-virtualbox       💻    brew ▼🆕7.1.18  Virtualiser for arm64 hardware
-virtualbox@6     💻    brew  6.1.50     Virtualiser for x86 hardware
+이름             종류  분류  버전    설명
+-----------------------------------------------------------
+virtualbox       💻    brew ▼🆕7.2.22  Virtualiser for arm64 hardware
+virtualbox@6     💻    brew  6.1.50  Virtualiser for x86 hardware
 
 설치: jige install <이름>
       (Homebrew Cask는 지금 설치 가능, 나머지는 추후 지원)
@@ -78,10 +78,9 @@ virtualbox@6     💻    brew  6.1.50     Virtualiser for x86 hardware
 $ jige info virtualbox            # ▼가 뜬 이유·근거 자료는 search가 아니라 여기서
 이름       : Oracle VirtualBox
 ...
-대체판     : 7.1.18 (이 Mac macOS 11~14 지원)
-필요한 이유 : 최신판은 macOS 13 이상 필요 — 벤더가 EOL(지원 종료) 선언함
+대체판     : 7.1.12,169651 (이 Mac에서 동작 확인됨 — 그 커밋의 depends_on macos: 선언으로 확인)
 신뢰도     : 🆕 방금 등록됨 (공식 문서로 확인, 다른 사용자 확인 아직 없음)
-근거       : (...) https://docs.oracle.com/...
+근거       : https://raw.githubusercontent.com/Homebrew/homebrew-cask/6f1edd4b.../Casks/v/virtualbox.rb
 
 $ jige install virtualbox
 macOS 코드네임: monterey / 아키텍처: x86_64
@@ -89,8 +88,8 @@ macOS 코드네임: monterey / 아키텍처: x86_64
 
 참고: 이 Mac은 macOS monterey(12.7.6)입니다.
 
-  최신판   7.2.22,175245 macOS 13 이상 필요 → 이 Mac에서 설치 안 될 가능성 높음
-  대체판   7.1.18     macOS 11~14 지원, 이 Mac에서 동작 확인됨 (참고: Oracle 기준 더 이상 지원 안 하는 EOL 버전)
+  최신판   7.2.22,175245
+  대체판   7.1.12,169651  (근거: depends_on, 신뢰도: 🆕 방금 등록됨 ...)
 
 어느 걸 설치할까요? [1] 대체판(추천)  [2] 최신판(강행)  번호 [1]:
 ...
@@ -155,68 +154,56 @@ MacPorts는 `port`, Mac App Store는 `mas`).
 2. 그 ID로 `mas install <id>`를 그대로 호출 — 다운로드·인증은 로그인된 App Store 세션이 처리
    (비밀번호/Touch ID는 전부 macOS 시스템 UI가 처리, jige·mas 둘 다 credential을 다루지 않음)
 
-### 과거 버전을 brew처럼 직접 설치하기
+### macOS 호환 과거 버전은 어디서 오나 — Homebrew git 기록을 "라이브"로
 
-`recipes/legacy/`에 아직 아무도 등록 안 해둔 앱이어도, `jige install`에 Homebrew-Cask의
-**특정 과거 커밋의 cask 파일 raw URL**을 그대로 넘기면 brew가 `brew install --cask <url>`로
-하는 것과 똑같이 그 시점 버전을 바로 설치합니다(AI 판단 없이 그 커밋에 적힌 값 그대로 사용,
-체크섬은 직접 재계산):
+최신판이 이 macOS를 더 이상 지원 안 할 수도 있는데, Homebrew-Cask의 `depends_on.macos`가
+비어있는 경우가 많아서(실제로 VirtualBox도 비어있음) "최신판이 언제부터 이 macOS를 지원
+안 했는지"는 AI가 추측할 수 없습니다. 그래서 jige는 **Homebrew-Cask 저장소 자체의 git
+커밋 기록**을 직접 뒤져서, 과거 어느 시점 cask 정의가 이 macOS에서 통했는지 기계적으로
+찾아냅니다(AI 판단 없음):
 
-```bash
-jige install https://raw.githubusercontent.com/Homebrew/homebrew-cask/<커밋SHA>/Casks/v/virtualbox.rb
-```
+1. 그 시점 cask가 `depends_on macos:`를 선언해뒀으면 그 값으로 판단
+2. 안 해놨으면(VirtualBox가 이 경우) 그 버전의 실제 설치 파일을 받아서 `Info.plist`의
+   `LSMinimumSystemVersion`을 직접 읽어 판단 — AI의 판단이 아니라 파일 자체의 사실
 
-어느 커밋을 써야 할지는 `tools/legacy_finder.py <토큰> --target-macos <번호>`로 찾을 수
-있습니다 — Homebrew-Cask의 git 기록을 걸어가며 그 버전의 `depends_on macos:` 선언(있으면)이나,
-없으면 실제 파일을 받아 `Info.plist`의 `LSMinimumSystemVersion`을 직접 읽어서 이 macOS에서
-돌아가는 가장 가까운 과거 버전을 찾아줍니다. 단, **Homebrew 자체가 벤더의 모든 패치 릴리스를
-따라가진 않아서**(예: VirtualBox는 Homebrew가 7.1.12에서 7.2.0으로 건너뛰어 7.1.18 커밋이
-아예 없음) 벤더가 낸 최신 호환 패치가 아니라 "Homebrew가 추적한 범위 안에서 가장 가까운
-버전"을 찾아준다는 한계가 있습니다.
+찾아낸 커밋의 raw URL(`https://raw.githubusercontent.com/Homebrew/homebrew-cask/<커밋SHA>/
+Casks/v/virtualbox.rb` 형태)을 brew가 `brew install --cask <url>`로 하는 것과 똑같이 바로
+설치에 씁니다 — url/sha256은 그 커밋에 적힌 값을 그대로 쓰고, 체크섬은 직접 재계산합니다.
 
-### `recipes/legacy/`는 누가 채우나 — 커뮤니티, AI 아님
+`jige install <토큰>`을 돌리면:
+- `recipes/legacy/<token>.json`에 이 macOS 메이저 버전용 커밋이 이미 저장돼 있으면 바로 씀
+- 없고 최신판이 이 macOS를 못 쓴다고 이미 알려져 있으면(`depends_on.macos` 기준) 그 자리에서
+  git 기록을 뒤져서 즉석으로 찾음 (`--find-legacy`로 강제 검색도 가능)
+- 찾으면 "최신판 X / 대체판 Y, 어느 걸 설치할까요?"로 한 번만 물어보고, 그다음은 자동 진행
+- 한 번 찾은 결과는 `~/Library/Caches/jige/legacy_discoveries.json`에 로컬 저장해서
+  같은 토큰을 다시 설치할 때 매번 git 기록을 다시 안 뒤짐
 
-Homebrew-Cask의 `depends_on.macos`가 비어있는 경우가 많아서(실제로 VirtualBox도 비어있음),
-"최신판이 이 macOS를 더 이상 지원 안 함"이란 지식은 AI가 자동으로 알아낼 수 없습니다 —
-체크섬까지 AI가 추측하게 하면 jige의 핵심 안전장치(sha256 검증)가 무의미해지므로,
-**이 정보는 항상 사람이 공식 홈페이지/문서를 직접 확인해서 등록**합니다.
-
-`recipes/legacy/<token>.json`을 아래 형식으로 만들어서 PR 올리면 됩니다 — 실제 예시는
-[recipes/legacy/virtualbox.json](recipes/legacy/virtualbox.json),
-[recipes/legacy/audacity.json](recipes/legacy/audacity.json) 참고:
+`recipes/legacy/<token>.json` 스키마는 아주 단순합니다 — macOS 메이저 버전별로 커밋 URL
+하나씩(예시: [recipes/legacy/virtualbox.json](recipes/legacy/virtualbox.json)):
 
 ```json
 {
-  "versions": [
-    {
-      "version": "이 macOS에서 쓸 수 있는 구버전 번호 (예: 3.7.9)",
-      "min_macos": "이 구버전이 지원하는 가장 낮은 macOS (숫자만, 예: 11)",
-      "max_macos": "이 구버전이 지원하는 가장 높은 macOS (예: 12)",
-      "latest_min_macos": "최신판이 요구하는 macOS (예: 13) — 이게 이 구버전이 필요한 이유",
-      "vendor_status": "os_limit 또는 eol",
-      "note": "근거 설명 (공식 문서·이슈 링크 포함)",
-      "source": ["공식 자료 URL"],
-      "confirmations": [],
-      "url": "Apple Silicon(arm64)용 다운로드 URL",
-      "sha256": "위 파일을 직접 받아서 shasum -a 256으로 직접 계산한 값",
-      "variations": {
-        "monterey": {"url": "Intel용 URL(arm64와 다르면)", "sha256": "직접 계산한 값"}
-      }
-    }
-  ]
+  "12": {
+    "commit_url": "https://raw.githubusercontent.com/Homebrew/homebrew-cask/<커밋SHA>/Casks/v/virtualbox.rb",
+    "found_by": "depends_on 또는 info_plist",
+    "confirmations": []
+  }
 }
 ```
 
-체크섬은 꼭 **직접 받은 파일로 직접 계산**해서 적어주세요 — 남이 적어둔 값을 베끼거나 AI가
-알려준 값을 그대로 쓰면 jige의 sha256 검증이 무의미해집니다.
+이 기기가 직접 찾아낸 값을 저장소에도 올릴 수 있게, 커밋 URL을 그대로 쓰거나
+`tools/legacy_finder.py <토큰> --target-macos <번호>`로 미리 찾아볼 수 있습니다. 단,
+**Homebrew 자체가 벤더의 모든 패치 릴리스를 따라가진 않아서**(예: VirtualBox는 Homebrew가
+7.1.12에서 7.2.0으로 건너뛰어 7.1.18 커밋이 아예 없음) 벤더가 낸 최신 호환 패치가 아니라
+"Homebrew가 추적한 범위 안에서 가장 가까운 버전"을 찾아준다는 한계가 있습니다.
 
 `recipes/legacy/<token>.json`은 이 저장소에 로컬로 있으면 그걸 우선 쓰고, 없으면
 `raw.githubusercontent.com`의 `main` 브랜치 버전을 Homebrew 인덱스와 똑같은 24시간
 캐시로 받아옵니다 — PR이 머지되면 `jige update` 없이도 하루 안에 모든 사용자에게 퍼집니다.
 
 대체판으로 설치하면 `jige list`에도 그 사실과 최신판 정보가 남습니다
-(`audacity   3.7.9 (대체판, 최신 4.0.2는 macOS 13+ 필요)`) — macOS를 업그레이드하고
-`jige upgrade`를 다시 돌리면 그때는 최신판이 설치됩니다.
+(`audacity   3.6.4 (대체판, 최신판은 4.0.2)`) — macOS를 업그레이드하고 `jige upgrade`를
+다시 돌리면 그때는 최신판이 설치됩니다.
 
 ## 왜 만들었나
 

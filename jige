@@ -104,23 +104,11 @@ def github_new_issue_url(title: str, body: str) -> str:
 
 
 LEGACY_ENTRY_TEMPLATE = """{
-  "versions": [
-    {
-      "version": "<이 macOS에서 쓸 수 있는 구버전 번호, 예: 3.7.9>",
-      "min_macos": "<이 구버전이 지원하는 가장 낮은 macOS, 예: 11>",
-      "max_macos": "<이 구버전이 지원하는 가장 높은 macOS, 예: 12>",
-      "latest_min_macos": "<최신판이 요구하는 macOS, 예: 13 - 이게 이 구버전이 필요한 이유>",
-      "vendor_status": "<os_limit 또는 eol>",
-      "note": "<근거 설명: 왜 필요한지, 공식 문서/이슈 링크 포함>",
-      "source": ["<공식 자료 URL, 한 개 이상>"],
-      "confirmations": [],
-      "url": "<Apple Silicon(arm64)용 다운로드 URL>",
-      "sha256": "<위 파일을 직접 받아서 shasum -a 256으로 직접 계산한 값>",
-      "variations": {
-        "monterey": {"url": "<Intel용 URL, arm64와 다르면>", "sha256": "<직접 계산한 sha256>"}
-      }
-    }
-  ]
+  "<macOS 메이저 번호, 예: 12>": {
+    "commit_url": "<https://raw.githubusercontent.com/Homebrew/homebrew-cask/커밋SHA/Casks/x/token.rb — 이 macOS에서 쓸 수 있는 구버전이 담긴 특정 커밋>",
+    "found_by": "<depends_on 또는 info_plist — 그 커밋에 macOS 요구치가 명시돼 있었는지, 실제 파일을 받아 Info.plist로 확인했는지>",
+    "confirmations": []
+  }
 }"""
 
 
@@ -315,7 +303,7 @@ def check_macos_requirement(min_version: str | None, app_label: str) -> None:
     if not meets_min_macos(min_version):
         current = ".".join(str(p) for p in macos_version_tuple())
         legacy_path = f"recipes/legacy/{app_label}.json"
-        if load_legacy_versions(app_label):
+        if load_legacy_commit_map(app_label):
             # 이미 파일이 있음 — 이 macOS는 못 커버하는 것뿐이니 새 버전 항목을 보태야 함
             action_url = github_edit_url(legacy_path)
             action_hint = "기존 파일에 이 macOS용 버전 추가"
@@ -346,18 +334,20 @@ def current_os() -> str:
 #  이 정보 자체가 없어서 자동으로 알아낼 방법이 없음.)
 # ---------------------------------------------------------------------------
 
-def load_legacy_versions(token: str) -> list[dict]:
-    """1) 이 체크아웃의 로컬 recipes/legacy/<token>.json이 있으면 그걸 그대로 씀
-    (jige 자체를 개발 중일 때처럼). 2) 없으면 GitHub의 recipes/legacy/<token>.json을
-    load_homebrew_index()와 똑같은 24시간 캐시 패턴으로 받아옴 — 그래서 누군가의 PR이
-    main에 머지되는 순간부터, jige 코드 자체를 업데이트(git pull)하지 않아도 하루 안에
-    모든 사용자에게 그 정보가 퍼짐(코드 업데이트와 데이터 갱신이 분리됨)."""
+LEGACY_DISCOVERIES_FILE = Path.home() / "Library" / "Caches" / "jige" / "legacy_discoveries.json"
+
+
+def load_legacy_commit_map(token: str) -> dict[str, dict]:
+    """recipes/legacy/<token>.json: {"<macOS 메이저 번호>": {"commit_url":..., "found_by":...,
+    "confirmations": [...]}} 형태. 1) 로컬에 있으면 그걸(jige 자체 개발 중일 때),
+    2) 없으면 GitHub의 recipes/legacy/<token>.json을 load_homebrew_index()와 똑같은
+    24시간 캐시로 받아옴 — PR이 머지되면 jige 코드 업데이트 없이도 하루 안에 퍼짐."""
     local_path = LOCAL_LEGACY_DIR / f"{token}.json"
     if local_path.exists():
         try:
-            return json.loads(local_path.read_text()).get("versions", [])
+            return json.loads(local_path.read_text())
         except json.JSONDecodeError:
-            return []
+            return {}
 
     cache_dir = INDEX_CACHE_DIR / "legacy"
     cache_path = cache_dir / f"{token}.json"
@@ -368,45 +358,150 @@ def load_legacy_versions(token: str) -> list[dict]:
             _download_json(url, cache_path)
         except urllib.error.HTTPError as e:
             if e.code == 404:
-                # 이 토큰엔 큐레이션된 대체판이 없다는 뜻 — 정상. 그것도 캐시해둬서
-                # 매 검색마다 다시 404를 때리지 않게 함.
-                cache_path.write_text("{}")
+                cache_path.write_text("{}")  # 이 토큰엔 큐레이션 없음 — 매번 재조회 안 하게 캐시
             elif not cache_path.exists():
-                return []
+                return {}
         except Exception:
             if not cache_path.exists():
-                return []
+                return {}
 
     try:
-        return json.loads(cache_path.read_text()).get("versions", [])
+        return json.loads(cache_path.read_text())
     except json.JSONDecodeError:
-        return []
+        return {}
 
 
-def macos_in_range(entry: dict) -> bool:
-    """이 머신의 macOS가 entry에 적힌 min_macos~max_macos 사이인지.
-    max_macos는 끝자리를 생략하면(예: "12") 그 메이저 버전 전체(12.x.y 전부)를
-    포함하는 뜻 — 0으로 패딩하면 "12"가 "12.0.0"만 가리키게 돼서 12.7.6 같은
-    실제 기기가 범위 밖으로 잘못 빠지는 경계 버그가 있었음."""
-    current = macos_version_tuple()
-    lo = tuple(int(p) for p in str(entry["min_macos"]).split("."))
-    hi = tuple(int(p) for p in str(entry["max_macos"]).split("."))
-    width = max(len(current), len(lo), len(hi))
-    current_p = current + (0,) * (width - len(current))
-    lo_p = lo + (0,) * (width - len(lo))
-    hi_p = hi + (9999,) * (width - len(hi))
-    return lo_p <= current_p <= hi_p
+def load_discoveries() -> dict:
+    if not LEGACY_DISCOVERIES_FILE.exists():
+        return {}
+    try:
+        return json.loads(LEGACY_DISCOVERIES_FILE.read_text())
+    except json.JSONDecodeError:
+        return {}
+
+
+def save_discovery(token: str, major: str, entry: dict) -> None:
+    """이 기기가 직접 찾아낸 (아직 저장소엔 없는) 대체판을 로컬에 캐시 — 같은 토큰을
+    다시 설치할 때 매번 git 기록을 다시 안 뒤지게. 저장소(recipes/legacy/) 반영은
+    사람이 이 파일을 보고 따로 검토해서 커밋함(자동 커밋 안 함)."""
+    data = load_discoveries()
+    data[f"{token}/{major}"] = entry
+    LEGACY_DISCOVERIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LEGACY_DISCOVERIES_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 
 def pick_legacy_for_this_mac(token: str) -> dict | None:
-    """이 머신이 쓸 수 있는데(macos_in_range) 최신판은 요구하는 macOS를
-    못 만족하는(latest_min_macos) 큐레이션 항목이 있으면 그걸 반환."""
+    """비용이 싼 조회만 함(로컬 discoveries 캐시 -> recipes/legacy/ 저장된 값) —
+    git 기록을 뒤지는 live 검색(find_legacy_commit_live)은 여기서 안 함. search처럼
+    여러 토큰을 한 번에 훑는 곳에서 매번 git 검색이 돌면 너무 느려지기 때문."""
     if current_os() != "macos":
         return None
-    for entry in load_legacy_versions(token):
-        if macos_in_range(entry) and not meets_min_macos(entry["latest_min_macos"]):
-            return entry
+    major = str(macos_version_tuple()[0])
+    discovered = load_discoveries().get(f"{token}/{major}")
+    if discovered:
+        return discovered
+    return load_legacy_commit_map(token).get(major)
+
+
+def cask_rb_path(token: str) -> str:
+    return f"Casks/{token[0].lower()}/{token}.rb"
+
+
+HOMEBREW_CASK_REPO = "Homebrew/homebrew-cask"
+
+
+def list_cask_commits(path: str, max_commits: int = 150) -> list[dict]:
+    commits: list[dict] = []
+    page = 1
+    while len(commits) < max_commits:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{HOMEBREW_CASK_REPO}/commits?path={path}&per_page=100&page={page}",
+            headers={"User-Agent": "jige"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                batch = json.load(r)
+        except Exception:
+            break
+        if not batch:
+            break
+        commits.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    return commits[:max_commits]
+
+
+def find_legacy_commit_live(token: str, target_major: int, cpu: str, max_candidates: int = 12) -> dict | None:
+    """AI 판단 없이 기계적으로: Homebrew-Cask의 해당 cask 파일 git 기록을 최신 -> 과거로
+    훑으며, 1) depends_on macos: 선언이 있으면 그걸로, 2) 없으면 실제 설치 파일을 받아
+    Info.plist의 LSMinimumSystemVersion을 직접 읽어서 이 macOS에서 동작하는 버전을 찾음.
+    tools/legacy_finder.py와 같은 로직 — jige install 중 즉석 호출용으로 이식함."""
+    path = cask_rb_path(token)
+    commits = list_cask_commits(path)
+    seen_mm: set[str] = set()
+    for c in commits:
+        sha = c["sha"]
+        commit_url = f"https://raw.githubusercontent.com/{HOMEBREW_CASK_REPO}/{sha}/{path}"
+        text = fetch_raw_github(commit_url)
+        if not text:
+            continue
+        parsed = parse_cask_rb(text)
+        version = parsed["version"]
+        if not version:
+            continue
+        mm = ".".join(version.split(",")[0].split(".")[:2])
+        if mm in seen_mm:
+            continue
+        seen_mm.add(mm)
+
+        dep = parsed["depends_on_macos"]
+        if dep:
+            floor = depends_on_macos_floor(dep)
+            if floor and target_major >= float(floor):
+                return {"commit_url": commit_url, "found_by": "depends_on", "confirmations": []}
+            if floor:
+                continue  # 명시적으로 이 macOS는 안 된다고 돼 있음 — 다음 과거 버전으로
+
+        if not parsed["arch_map"] or not parsed["sha256"] or not parsed["url_template"] or not parsed["app"]:
+            continue  # .pkg거나 정규식으로 못 읽는 형태 — 실측 불가, 건너뜀
+
+        which = "arm" if cpu == "arm64" else "intel"
+        arch_literal = parsed["arch_map"][which]
+        dl_url = resolve_cask_rb_url(parsed["url_template"], version, arch_literal)
+        if not dl_url:
+            continue
+        tmp = Path(tempfile.mkdtemp()) / f"{token}-{mm}.dmg"
+        try:
+            download(dl_url, tmp)
+        except Exception:
+            continue
+        mount_point = attach_dmg(tmp, f"{token}-{mm}")
+        try:
+            apps = list(mount_point.glob("*.app"))
+            min_os = None
+            if apps:
+                plist_path = apps[0] / "Contents" / "Info.plist"
+                if plist_path.exists():
+                    with open(plist_path, "rb") as f:
+                        min_os = plistlib.load(f).get("LSMinimumSystemVersion")
+        finally:
+            detach_dmg(mount_point)
+        if min_os and tuple(int(p) for p in min_os.split(".")) <= (target_major, 9999):
+            return {"commit_url": commit_url, "found_by": "info_plist", "confirmations": []}
+
+        if len(seen_mm) >= max_candidates:
+            break
     return None
+
+
+def fetch_raw_github(url: str) -> str | None:
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "jige"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.read().decode("utf-8", errors="replace")
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -526,11 +621,10 @@ def search_homebrew(query: str) -> list[dict]:
             desc = entry.get("desc", "")
             rank = _rank(query, token, display_name, desc)
             if rank < 999:
-                # 대체판 상세(최신판 버전/EOL 여부/근거)는 더 이상 search 테이블에 안 욱여넣고
-                # jige info에서 보게 함 — search는 ▼ 기호만 띄움(cmd_search가 처리).
+                # 대체판 상세(어느 버전인지/근거)는 search 테이블에 안 욱여넣고 jige info에서
+                # 보게 함 — search는 ▼ 기호만 띄움(cmd_search가 처리), 버전 칸은 최신판 그대로.
+                # (가벼운 조회만 함 — commit 내용을 실제로 열어보는 건 install 때)
                 legacy = pick_legacy_for_this_mac(token) if kind == "cask" else None
-                if legacy:
-                    version = legacy["version"]
                 hits.append({
                     "name": token,
                     "version": version,
@@ -1083,24 +1177,41 @@ def install_via_mas(token: str, recipe: dict) -> None:
 
 
 def resolve_version_for_this_mac(
-    token: str, recipe: dict, force_latest: bool
+    token: str, recipe: dict, cpu: str, force_latest: bool, force_find_legacy: bool = False
 ) -> tuple[dict, dict | None]:
-    """recipes/legacy/<token>.json에 이 머신이 쓸 수 있는 대체판이 있고 최신판은
-    이 macOS를 지원 안 하는 걸로 큐레이션돼 있으면, 안내하고 물어본 뒤 recipe를
-    그 대체판으로 바꿔서 반환. (recipe, 실제로 쓴 legacy entry 또는 None)을 반환."""
-    legacy = pick_legacy_for_this_mac(token)
-    if not legacy or force_latest:
+    """최신판이 이 macOS에서 안 될 수 있으면 대체판을 찾아서(저장소/로컬 발견 캐시 우선,
+    없으면 필요할 때만 Homebrew git 기록을 즉석 검색) 안내하고 물어본 뒤 recipe를 바꿔서
+    반환. (recipe, 실제로 쓴 legacy entry 또는 None)을 반환."""
+    if force_latest:
         return recipe, None
 
+    target_major = macos_version_tuple()[0]
+    legacy = pick_legacy_for_this_mac(token)
+
+    if not legacy:
+        # 저장소/로컬에 없음 — depends_on이 이미 이 macOS를 막는다고 확실히 말하거나
+        # 사용자가 --find-legacy로 명시 요청했을 때만 즉석 검색(비용이 커서 조건부로만 함)
+        macos_min = (recipe.get("depends_on") or {}).get("macos", {}).get(">=")
+        blocked = bool(macos_min) and not meets_min_macos(macos_min[0])
+        if not (blocked or force_find_legacy):
+            return recipe, None
+        print(f"\n이 Mac(macOS {target_major})에서 쓸 수 있는 과거 버전을 Homebrew 기록에서 찾는 중...")
+        found = find_legacy_commit_live(token, target_major, cpu)
+        if not found:
+            print("(못 찾음 — 최신판으로 진행합니다)")
+            return recipe, None
+        save_discovery(token, str(target_major), found)
+        legacy = found
+        print(f"찾음: {found['commit_url']} (근거: {found['found_by']})")
+
+    legacy_recipe = fetch_recipe_from_cask_rb(legacy["commit_url"], cpu)
     latest_version = recipe.get("version")
     current = ".".join(str(p) for p in macos_version_tuple())
-    eol_note = " (참고: Oracle 기준 더 이상 지원 안 하는 EOL 버전)" if legacy.get("vendor_status") == "eol" else ""
     print()
     print(f"참고: 이 Mac은 macOS {sw_vers_codename()}({current})입니다.")
     print()
-    print(f"  최신판   {latest_version:<10} macOS {legacy['latest_min_macos']} 이상 필요 → 이 Mac에서 설치 안 될 가능성 높음")
-    print(f"  대체판   {legacy['version']:<10} macOS {legacy['min_macos']}~{legacy['max_macos']} 지원, 이 Mac에서 동작 확인됨{eol_note}")
-    print(f"           신뢰도: {trust_label(legacy)}")
+    print(f"  최신판   {latest_version}")
+    print(f"  대체판   {legacy_recipe['version']}  (근거: {legacy['found_by']}, 신뢰도: {trust_label(legacy)})")
     print()
 
     choice = ""
@@ -1111,26 +1222,10 @@ def resolve_version_for_this_mac(
 
     if choice == "2":
         return recipe, None
-
-    merged = dict(recipe)
-    merged["version"] = legacy["version"]
-    merged["url"] = legacy["url"]
-    merged["sha256"] = legacy["sha256"]
-    merged["variations"] = legacy.get("variations", {})
-    # 최신판의 depends_on.macos는 대체판엔 안 맞음 — macos_in_range()로 이미
-    # 이 머신이 대체판 범위에 맞는 걸 확인했으니 여기서 지워서 이중 체크 안 함
-    # (안 지우면 대체판으로 바꿔놓고도 최신판 기준 macOS 요구치로 다시 막혀버림)
-    merged["depends_on"] = {}
-    if legacy.get("app"):
-        # 구버전은 .app 번들 이름 자체가 다를 수 있음 (예: Audacity.app -> 최신판 Audacity 4.app)
-        merged["artifacts"] = [
-            {**a, "app": [legacy["app"]]} if "app" in a else a
-            for a in merged.get("artifacts", [])
-        ]
-    return merged, legacy
+    return legacy_recipe, legacy
 
 
-def cmd_install(token: str, mas: bool = False, latest: bool = False) -> None:
+def cmd_install(token: str, mas: bool = False, latest: bool = False, find_legacy: bool = False) -> None:
     codename = sw_vers_codename()
     cpu = arch()
     print(f"macOS 코드네임: {codename} / 아키텍처: {cpu}")
@@ -1155,7 +1250,9 @@ def cmd_install(token: str, mas: bool = False, latest: bool = False) -> None:
             return
 
         latest_version = recipe.get("version")  # 대체판으로 바뀌기 전 버전 — list에 "최신은 X" 표시용
-        recipe, legacy_used = resolve_version_for_this_mac(token, recipe, force_latest=latest)
+        recipe, legacy_used = resolve_version_for_this_mac(
+            token, recipe, cpu, force_latest=latest, force_find_legacy=find_legacy
+        )
 
     macos_min = (recipe.get("depends_on") or {}).get("macos", {}).get(">=")
     if macos_min:
@@ -1220,7 +1317,6 @@ def cmd_install(token: str, mas: bool = False, latest: bool = False) -> None:
         # 최신판으로 바꿔줌(resolve_version_for_this_mac이 그때는 legacy를 안 고름).
         state[token]["legacy"] = True
         state[token]["latest_version"] = latest_version
-        state[token]["latest_min_macos"] = legacy_used["latest_min_macos"]
     save_state(state)
 
     print()
@@ -1239,19 +1335,19 @@ def cmd_info(token: str) -> None:
     if recipe.get("desc"):
         print(f"설명       : {recipe['desc']}")
 
-    # search에선 ▼ 기호만 보이고 자세한 내용(최신판 요구치/EOL 여부/근거/신뢰도)은
-    # 여기로 몰아둠 — 피드백: search 결과 한 줄에 다 욱여넣으면 읽기 힘들다고 함.
+    # search에선 ▼ 기호만 보이고 자세한 내용은 여기로 몰아둠 — 피드백: search 결과
+    # 한 줄에 다 욱여넣으면 읽기 힘들다고 함.
     legacy = pick_legacy_for_this_mac(token)
     if legacy:
+        legacy_recipe = fetch_recipe_from_cask_rb(legacy["commit_url"], arch())
+        found_by_desc = {
+            "depends_on": "그 커밋의 depends_on macos: 선언으로 확인",
+            "info_plist": "실제 파일을 받아 Info.plist의 LSMinimumSystemVersion으로 확인",
+        }.get(legacy.get("found_by"), legacy.get("found_by", "?"))
         print()
-        status = "벤더가 EOL(지원 종료) 선언함" if legacy.get("vendor_status") == "eol" else "단순 OS 지원 한계(벤더 EOL 선언은 아님)"
-        print(f"대체판     : {legacy['version']} (이 Mac macOS {legacy['min_macos']}~{legacy['max_macos']} 지원)")
-        print(f"필요한 이유 : 최신판은 macOS {legacy['latest_min_macos']} 이상 필요 — {status}")
+        print(f"대체판     : {legacy_recipe.get('version', '?')} (이 Mac에서 동작 확인됨 — {found_by_desc})")
         print(f"신뢰도     : {trust_label(legacy)}")
-        if legacy.get("note"):
-            print(f"근거       : {legacy['note']}")
-        for src in legacy.get("source", []):
-            print(f"            {src}")
+        print(f"근거       : {legacy['commit_url']}")
 
 
 def cmd_list() -> None:
@@ -1267,10 +1363,7 @@ def cmd_list() -> None:
         version_display = info.get("version", "?")
         if info.get("legacy"):
             any_legacy = True
-            version_display += (
-                f" (대체판, 최신 {info.get('latest_version', '?')}는 "
-                f"macOS {info.get('latest_min_macos', '?')}+ 필요)"
-            )
+            version_display += f" (대체판, 최신판은 {info.get('latest_version', '?')})"
         print(f"{token:<{name_w}}  {version_display:<14}  {info.get('installed_at', '?')}")
     if any_legacy:
         print()
@@ -1386,6 +1479,10 @@ def main() -> None:
         "--latest", action="store_true",
         help="이 macOS에 안 맞을 수 있어도 묻지 않고 최신판으로 강행 (recipes/legacy/ 큐레이션 무시)"
     )
+    p_install.add_argument(
+        "--find-legacy", action="store_true",
+        help="저장소에 대체판이 없어도 Homebrew-Cask 커밋 기록에서 즉석으로 찾아봄 (시간 좀 걸림)"
+    )
 
     p_search = sub.add_parser(
         "search", help=t("help_search"),
@@ -1432,7 +1529,7 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.command == "install":
-        cmd_install(args.token, mas=args.mas, latest=args.latest)
+        cmd_install(args.token, mas=args.mas, latest=args.latest, find_legacy=args.find_legacy)
     elif args.command == "search":
         cmd_search(args.query, mas=args.mas)
     elif args.command == "config":

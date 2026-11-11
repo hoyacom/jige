@@ -1,34 +1,7 @@
 {
-  "versions": [
-    {
-      "version": "3.7.9",
-      "app": "Audacity.app",
-      "min_macos": "10.9",
-      "max_macos": "12",
-      "latest_min_macos": "13",
-      "vendor_status": "os_limit",
-      "note": "4.0부터 Qt 6.10/6.11을 쓰면서 macOS 13 이상이 필요해짐 (Homebrew Cask의 depends_on.macos도 실제로 13으로 돼 있음 — VirtualBox와 달리 이번엔 Homebrew 쪽에 정보가 있었음). 3.7.9(3.x 계열의 마지막 릴리스)는 실제로 다운로드해서 직접 sha256을 계산했고, Info.plist의 LSMinimumSystemVersion도 직접 열어서 확인함(10.9). Audacity 공식 GitHub 이슈(audacity/audacity#12535, 4.0.1이 macOS 12에서 Info.plist엔 10.15라고 해놓고 실제로는 조용히 종료되는 버그)에서도 'Monterey 사용자는 3.7.x를 쓰라'고 안내함 — vendor가 EOL을 공식 선언한 건 아니라서 vendor_status는 eol이 아니라 os_limit. .app 번들 이름이 최신판('Audacity 4.app')과 달라서('Audacity.app') app 필드로 따로 지정함.",
-      "source": [
-        "https://github.com/audacity/audacity/issues/12535",
-        "https://github.com/audacity/audacity/releases/tag/Audacity-3.7.9"
-      ],
-      "confirmations": [],
-      "url": "https://github.com/audacity/audacity/releases/download/Audacity-3.7.9/audacity-macOS-3.7.9-arm64.dmg",
-      "sha256": "fafeb7fa963d3e2ba05ee7aba5290c966362ac5f5feca86eb8b1f61c7819d499",
-      "variations": {
-        "catalina": {
-          "url": "https://github.com/audacity/audacity/releases/download/Audacity-3.7.9/audacity-macOS-3.7.9-x86_64.dmg",
-          "sha256": "142f3900bea5d49a73e66cce06e156b8e5387643e1b718806e85286753d6294f"
-        },
-        "big_sur": {
-          "url": "https://github.com/audacity/audacity/releases/download/Audacity-3.7.9/audacity-macOS-3.7.9-x86_64.dmg",
-          "sha256": "142f3900bea5d49a73e66cce06e156b8e5387643e1b718806e85286753d6294f"
-        },
-        "monterey": {
-          "url": "https://github.com/audacity/audacity/releases/download/Audacity-3.7.9/audacity-macOS-3.7.9-x86_64.dmg",
-          "sha256": "142f3900bea5d49a73e66cce06e156b8e5387643e1b718806e85286753d6294f"
-        }
-      }
-    }
-  ]
+  "12": {
+    "commit_url": "https://raw.githubusercontent.com/Homebrew/homebrew-cask/6fc2bda7b25511ab3b17bfc1a190a09098ca2ae9/Casks/a/audacity.rb",
+    "found_by": "info_plist",
+    "confirmations": []
+  }
 }

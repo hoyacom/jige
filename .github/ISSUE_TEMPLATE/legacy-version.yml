@@ -1,135 +1,45 @@
-name: "macOS 호환 구버전 제보 (recipes/legacy)"
-description: "최신판이 내 macOS를 더 이상 지원 안 해서, 대신 쓸 수 있는 구버전을 찾았을 때"
-title: "legacy: <앱 이름> <구버전 버전> on macOS <최소 지원 버전>"
+name: "macOS 호환 과거 버전 제보 (recipes/legacy)"
+description: "jige가 아직 모르는 토큰+macOS 조합에 쓸 수 있는 Homebrew-Cask 커밋을 찾았을 때"
+title: "legacy: <앱 이름> macOS <메이저 버전>"
 labels: ["legacy-version"]
 body:
   - type: markdown
     attributes:
       value: |
-        최신판이 당신의 macOS를 더 이상 지원 안 하는데, 여전히 쓸 수 있는 구버전을 공식
-        홈페이지/GitHub Releases/문서에서 직접 확인하셨다면 여기에 적어주세요.
-
-        **지켜주셔야 하는 것 한 가지**: 체크섬(sha256)은 꼭 **직접 받은 파일로 직접 계산**해서
-        적어주세요 (`shasum -a 256 받은파일.dmg`). 남이 적어둔 값을 그대로 베끼거나, AI가
-        "이 값일 거다"라고 알려준 걸 그대로 적지 말아주세요 — jige는 이 값으로 다운로드 파일이
-        위변조 안 됐는지 검증하기 때문에, 틀린 값이 들어가면 그 안전장치가 무의미해집니다.
-
-        작성된 예시가 필요하면 저장소의 `recipes/legacy/virtualbox.json`,
-        `recipes/legacy/audacity.json`을 참고하세요.
+        `jige install <토큰> --find-legacy`나 `tools/legacy_finder.py <토큰> --target-macos <번호>`로
+        찾은 결과를 그대로 적어주시면 됩니다 — 둘 다 AI 판단 없이 Homebrew-Cask의 git 기록(또는
+        실제 파일의 Info.plist)으로 기계적으로 찾은 값이라 그대로 믿을 수 있습니다.
 
   - type: input
     id: token
     attributes:
       label: "앱 이름 (token)"
-      description: "jige search/install에 쓰는 바로 그 이름. Homebrew Cask라면 그 토큰과 동일해야 함."
-      placeholder: "예: audacity"
+      placeholder: "예: virtualbox"
     validations:
       required: true
 
   - type: input
-    id: version
+    id: macos_major
     attributes:
-      label: "등록할 구버전 버전 번호"
-      placeholder: "예: 3.7.9"
-    validations:
-      required: true
-
-  - type: input
-    id: latest_min_macos
-    attributes:
-      label: "최신판이 요구하는 macOS 최소 버전 (숫자만)"
-      description: "최신판 cask의 depends_on.macos나 공식 문서에 적힌 값. 이게 이 구버전이 필요한 이유입니다."
-      placeholder: "예: 13"
-    validations:
-      required: true
-
-  - type: input
-    id: min_macos
-    attributes:
-      label: "이 구버전이 지원하는 macOS 최소 버전"
-      placeholder: "예: 10.9 (모르면 그냥 공식 발표 기준으로, 모르면 11 같이 보수적으로)"
-    validations:
-      required: true
-
-  - type: input
-    id: max_macos
-    attributes:
-      label: "이 구버전이 지원하는 macOS 최대 버전"
-      description: "확실하지 않으면 지금 이 구버전이 필요해진 기준 macOS 바로 아래 버전(= latest_min_macos보다 하나 작은 메이저)을 적어도 됩니다."
+      label: "macOS 메이저 버전"
       placeholder: "예: 12"
     validations:
       required: true
 
+  - type: input
+    id: commit_url
+    attributes:
+      label: "Homebrew-Cask 커밋 raw URL"
+      placeholder: "https://raw.githubusercontent.com/Homebrew/homebrew-cask/<커밋SHA>/Casks/x/token.rb"
+    validations:
+      required: true
+
   - type: dropdown
-    id: vendor_status
+    id: found_by
     attributes:
-      label: "이 구버전의 상태"
-      description: "벤더(개발사)가 공식적으로 '이 버전은 더 이상 지원 안 함(EOL)'이라고 발표했는지 여부"
+      label: "어떻게 확인했나요"
       options:
-        - "os_limit (단순히 최신판이 OS 요구치를 올린 것 — 이 구버전 자체는 EOL 선언 안 됨)"
-        - "eol (벤더가 이 버전 계열 자체를 공식적으로 EOL/지원종료 선언함)"
+        - "depends_on (그 커밋의 depends_on macos: 선언으로 확인)"
+        - "info_plist (실제 파일을 받아 Info.plist의 LSMinimumSystemVersion으로 확인)"
     validations:
       required: true
-
-  - type: input
-    id: url_arm64
-    attributes:
-      label: "Apple Silicon(arm64)용 다운로드 URL"
-      description: "Universal 빌드만 있다면 그 URL을 여기에."
-      placeholder: "https://..."
-    validations:
-      required: true
-
-  - type: input
-    id: sha256_arm64
-    attributes:
-      label: "위 파일의 sha256 (직접 다운로드해서 직접 계산한 값)"
-      placeholder: "shasum -a 256 결과값 64자리"
-    validations:
-      required: true
-
-  - type: input
-    id: url_intel
-    attributes:
-      label: "Intel(x86_64)용 다운로드 URL"
-      description: "arm64와 파일이 다르면 적어주세요. Universal 빌드라서 위와 같다면 비워두세요."
-      placeholder: "https://... (없으면 비워두기)"
-    validations:
-      required: false
-
-  - type: input
-    id: sha256_intel
-    attributes:
-      label: "위 Intel 파일의 sha256 (직접 계산한 값)"
-      placeholder: "shasum -a 256 결과값 (Intel URL을 적었으면 필수)"
-    validations:
-      required: false
-
-  - type: textarea
-    id: source
-    attributes:
-      label: "근거 자료 (공식 홈페이지/릴리스 노트/GitHub 이슈 등)"
-      description: "한 줄에 링크 하나씩. 이 정보가 '어디서' 나온 건지는 필수입니다 — AI나 추측이 아니라 공식 자료 기준이어야 합니다."
-      placeholder: |
-        https://github.com/owner/repo/releases/tag/v3.7.9
-        https://github.com/owner/repo/issues/12535
-    validations:
-      required: true
-
-  - type: checkboxes
-    id: confirm
-    attributes:
-      label: "확인"
-      options:
-        - label: "위 URL의 파일을 실제로 내려받아서 sha256을 직접 계산했습니다 (남의 값을 베끼거나 AI가 알려준 값을 그대로 쓰지 않았습니다)"
-          required: true
-        - label: "이 버전을 실제로 제 macOS에서 설치(또는 실행)해봤습니다"
-          required: false
-
-  - type: input
-    id: tested_macos
-    attributes:
-      label: "테스트한 macOS 버전/아키텍처 (설치해봤다면)"
-      placeholder: "예: macOS 12.7.6 Monterey, x86_64"
-    validations:
-      required: false
