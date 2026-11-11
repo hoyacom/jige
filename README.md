@@ -2,6 +2,8 @@
 
 **brew 없이도, port 없이도 Mac에 맞는 앱을 찾아서 설치해주는 도구.**
 
+🔗 **홈페이지**: [hoyacom.github.io/jige](https://hoyacom.github.io/jige/) (한국어: [/ko/](https://hoyacom.github.io/jige/ko/), 日本語: [/ja/](https://hoyacom.github.io/jige/ja/))
+
 지게는 짐을 등에 지고 어디든 날라다 주는 한국 전통 운반 도구입니다.
 이 도구도 "패키지를 지고 이 기기로 날라다 설치한다"는 뜻으로 지었습니다.
 
