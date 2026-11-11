@@ -155,6 +155,25 @@ MacPorts는 `port`, Mac App Store는 `mas`).
 2. 그 ID로 `mas install <id>`를 그대로 호출 — 다운로드·인증은 로그인된 App Store 세션이 처리
    (비밀번호/Touch ID는 전부 macOS 시스템 UI가 처리, jige·mas 둘 다 credential을 다루지 않음)
 
+### 과거 버전을 brew처럼 직접 설치하기
+
+`recipes/legacy/`에 아직 아무도 등록 안 해둔 앱이어도, `jige install`에 Homebrew-Cask의
+**특정 과거 커밋의 cask 파일 raw URL**을 그대로 넘기면 brew가 `brew install --cask <url>`로
+하는 것과 똑같이 그 시점 버전을 바로 설치합니다(AI 판단 없이 그 커밋에 적힌 값 그대로 사용,
+체크섬은 직접 재계산):
+
+```bash
+jige install https://raw.githubusercontent.com/Homebrew/homebrew-cask/<커밋SHA>/Casks/v/virtualbox.rb
+```
+
+어느 커밋을 써야 할지는 `tools/legacy_finder.py <토큰> --target-macos <번호>`로 찾을 수
+있습니다 — Homebrew-Cask의 git 기록을 걸어가며 그 버전의 `depends_on macos:` 선언(있으면)이나,
+없으면 실제 파일을 받아 `Info.plist`의 `LSMinimumSystemVersion`을 직접 읽어서 이 macOS에서
+돌아가는 가장 가까운 과거 버전을 찾아줍니다. 단, **Homebrew 자체가 벤더의 모든 패치 릴리스를
+따라가진 않아서**(예: VirtualBox는 Homebrew가 7.1.12에서 7.2.0으로 건너뛰어 7.1.18 커밋이
+아예 없음) 벤더가 낸 최신 호환 패치가 아니라 "Homebrew가 추적한 범위 안에서 가장 가까운
+버전"을 찾아준다는 한계가 있습니다.
+
 ### `recipes/legacy/`는 누가 채우나 — 커뮤니티, AI 아님
 
 Homebrew-Cask의 `depends_on.macos`가 비어있는 경우가 많아서(실제로 VirtualBox도 비어있음),

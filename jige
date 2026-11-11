@@ -781,6 +781,138 @@ def pick_url_sha(recipe: dict, cpu: str, codename: str) -> tuple[str, str]:
     return v.get("url", recipe["url"]), v.get("sha256", recipe["sha256"])
 
 
+CASK_RB_RAW_URL_RE = re.compile(
+    r"^https://raw\.githubusercontent\.com/Homebrew/homebrew-cask/([0-9a-f]+)/(Casks/.+\.rb)$"
+)
+
+
+def parse_cask_rb(text: str) -> dict:
+    """brew가 직접 읽는 cask .rb 파일을 정규식으로 최소한만 파싱.
+    jige 자체 recipe 스키마로 못 바꾸는 복잡한 on_arch_conditional/if 블록 등은
+    건드리지 않고 그냥 None으로 둠 — 모르면서 지어내지 않는 게 핵심."""
+    out: dict = {
+        "version": None, "arch_map": None, "sha256": None,
+        "url_template": None, "name": None, "desc": None, "homepage": None,
+        "app": None, "pkg": None, "depends_on_macos": None,
+    }
+    m = re.search(r'^\s*version\s+"([^"]+)"', text, re.M)
+    if m:
+        out["version"] = m.group(1)
+    m = re.search(r'^\s*arch\s+arm:\s*"([^"]+)"\s*,\s*intel:\s*"([^"]+)"', text, re.M)
+    if m:
+        out["arch_map"] = {"arm": m.group(1), "intel": m.group(2)}
+    m = re.search(r'^\s*sha256\s+"([0-9a-f]{64})"', text, re.M)
+    if m:
+        out["sha256"] = {"arm": m.group(1), "intel": m.group(1)}
+    else:
+        m = re.search(
+            r'^\s*sha256\s+arm:\s*"([0-9a-f]{64})"\s*,?\s*\n?\s*intel:\s*"([0-9a-f]{64})"',
+            text, re.M,
+        )
+        if m:
+            out["sha256"] = {"arm": m.group(1), "intel": m.group(2)}
+    m = re.search(r'^\s*url\s+"([^"]+)"', text, re.M)
+    if m:
+        out["url_template"] = m.group(1)
+    m = re.search(r'^\s*name\s+"([^"]+)"', text, re.M)
+    if m:
+        out["name"] = m.group(1)
+    m = re.search(r'^\s*desc\s+"([^"]+)"', text, re.M)
+    if m:
+        out["desc"] = m.group(1)
+    m = re.search(r'^\s*homepage\s+"([^"]+)"', text, re.M)
+    if m:
+        out["homepage"] = m.group(1)
+    m = re.search(r'^\s*app\s+"([^"]+\.app)"', text, re.M)
+    if m:
+        out["app"] = m.group(1)
+    m = re.search(r'^\s*pkg\s+"([^"]+\.pkg)"', text, re.M)
+    if m:
+        out["pkg"] = m.group(1)
+        # choices는 선택적 — 못 찾으면 pkg 자체의 기본 선택값으로 설치(자동 선택 보정 없음)
+    # "depends_on macos: ..." (버전 비교형)만 잡음 — 플랫폼 마커인 "depends_on :macos"는 매치 안 됨
+    m = re.search(r'^\s*depends_on\s+macos:\s*(.+)$', text, re.M)
+    if m:
+        out["depends_on_macos"] = m.group(1).strip()
+    return out
+
+
+_CODENAME_TO_MAJOR = {name: major for major, name in
+                       ((k.split(".")[0], v) for k, v in MACOS_CODENAME.items())}
+
+
+def depends_on_macos_floor(expr: str) -> str | None:
+    """'">= :monterey"'/'":monterey"'/'">= 13"' 같은 cask DSL 표현을 jige의
+    depends_on.macos.>= 에 쓰는 숫자 문자열로 바꿈. 해석 못 하면 None."""
+    m = re.search(r':(\w+)', expr)
+    if m and m.group(1) in _CODENAME_TO_MAJOR:
+        return _CODENAME_TO_MAJOR[m.group(1)]
+    m = re.search(r'(\d+(?:\.\d+)?)', expr)
+    return m.group(1) if m else None
+
+
+def resolve_cask_rb_url(template: str, version: str, arch_literal: str) -> str | None:
+    """#{version}, #{version.csv.first}, #{version.csv.second}, #{arch} 정도의
+    흔한 패턴만 치환 — 그 외 변수가 남아있으면 None(모르는 템플릿은 포기)."""
+    csv_parts = version.split(",")
+    repl = {
+        "version.csv.first": csv_parts[0],
+        "version.csv.second": csv_parts[1] if len(csv_parts) > 1 else "",
+        "version": version,
+        "arch": arch_literal,
+    }
+    out = template
+    for key, val in repl.items():
+        out = out.replace("#{" + key + "}", val)
+    return None if "#{" in out else out
+
+
+def fetch_recipe_from_cask_rb(url: str, cpu: str) -> dict:
+    """brew가 하는 것처럼 — Homebrew-Cask의 특정 커밋(과거 버전 포함) raw .rb URL을
+    직접 읽어서 jige recipe 스키마로 바꿈. 이 머신의 cpu에 맞춰 바로 url/sha256을
+    확정해서 돌려줌(여러 macOS 코드네임별 variations는 필요 없음 — 지금 이 기기용)."""
+    req = urllib.request.Request(url, headers={"User-Agent": "jige"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        text = r.read().decode("utf-8", errors="replace")
+
+    parsed = parse_cask_rb(text)
+    if not parsed["version"]:
+        sys.exit(f"'{url}'에서 version을 못 읽음 — 정규식으로 파싱 가능한 단순한 cask 파일만 지원함")
+    if not parsed["arch_map"] or not parsed["sha256"] or not parsed["url_template"]:
+        sys.exit(f"'{url}'의 arch/sha256/url 선언이 지금 파서로 못 읽는 형태임 — 수동 설치 필요")
+
+    which = "arm" if cpu == "arm64" else "intel"
+    arch_literal = parsed["arch_map"][which]
+    resolved_url = resolve_cask_rb_url(parsed["url_template"], parsed["version"], arch_literal)
+    if not resolved_url:
+        sys.exit(f"url 템플릿을 못 풂: {parsed['url_template']!r} (모르는 변수 포함)")
+    sha = parsed["sha256"][which]
+
+    artifacts = []
+    if parsed["app"]:
+        artifacts.append({"app": [parsed["app"]]})
+    elif parsed["pkg"]:
+        artifacts.append({"pkg": [parsed["pkg"]]})  # choices는 이 파서로 안 뽑음 — pkg 기본값으로 설치됨
+
+    depends_on = {}
+    if parsed["depends_on_macos"]:
+        floor = depends_on_macos_floor(parsed["depends_on_macos"])
+        if floor:
+            depends_on = {"macos": {">=": [floor]}}
+
+    return {
+        "name": [parsed["name"] or parsed["desc"] or parsed["version"]],
+        "version": parsed["version"],
+        "url": resolved_url,
+        "sha256": sha,
+        "variations": {},
+        "artifacts": artifacts,
+        "homepage": parsed["homepage"],
+        "desc": parsed["desc"],
+        "depends_on": depends_on,
+    }
+
+
 def sha256_of(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -1003,15 +1135,27 @@ def cmd_install(token: str, mas: bool = False, latest: bool = False) -> None:
     cpu = arch()
     print(f"macOS 코드네임: {codename} / 아키텍처: {cpu}")
 
-    recipe, source = fetch_recipe(token, allow_mas=mas_enabled() or mas)
-    print(f"레시피: {recipe.get('name')} ({source}, 등록 버전 {recipe.get('version')})")
+    cask_rb_match = CASK_RB_RAW_URL_RE.match(token)
+    legacy_used = None
+    if cask_rb_match:
+        # brew install --cask <raw url>와 똑같은 발상 — Homebrew-Cask의 특정 커밋(과거
+        # 버전 포함)의 .rb를 직접 읽어서 설치. recipes/legacy/ 미리 큐레이션 없이, 사용자가
+        # 이미 "이 커밋이 필요하다"고 고른 뒤라 resolve_version_for_this_mac은 건너뜀.
+        real_token = cask_rb_match.group(2).rsplit("/", 1)[-1].removesuffix(".rb")
+        recipe = fetch_recipe_from_cask_rb(token, cpu)
+        source = f"Homebrew-Cask 커밋 {cask_rb_match.group(1)[:10]} (brew 방식 직접 설치)"
+        print(f"레시피: {recipe.get('name')} ({source}, 등록 버전 {recipe.get('version')})")
+        token = real_token
+    else:
+        recipe, source = fetch_recipe(token, allow_mas=mas_enabled() or mas)
+        print(f"레시피: {recipe.get('name')} ({source}, 등록 버전 {recipe.get('version')})")
 
-    if "_mas_id" in recipe:
-        install_via_mas(token, recipe)
-        return
+        if "_mas_id" in recipe:
+            install_via_mas(token, recipe)
+            return
 
-    latest_version = recipe.get("version")  # 대체판으로 바뀌기 전 버전 — list에 "최신은 X" 표시용
-    recipe, legacy_used = resolve_version_for_this_mac(token, recipe, force_latest=latest)
+        latest_version = recipe.get("version")  # 대체판으로 바뀌기 전 버전 — list에 "최신은 X" 표시용
+        recipe, legacy_used = resolve_version_for_this_mac(token, recipe, force_latest=latest)
 
     macos_min = (recipe.get("depends_on") or {}).get("macos", {}).get(">=")
     if macos_min:
