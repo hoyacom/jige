@@ -39,7 +39,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 # formulae.brew.sh가 Python urllib의 기본 User-Agent("Python-urllib/3.x")를 유독
 # "Maximum threads for service reached" 503으로 많이 막는 걸 실측으로 확인함(curl이나
@@ -602,6 +602,19 @@ def _rank(query: str, *fields: str) -> int:
             return i * 10 + 1
         if q in field:
             return i * 10 + 2
+    # 공백/하이픈/언더스코어 무시하고 재시도 — "InputSourcePro"가 토큰
+    # "input-source-pro"나 표시명 "Input Source Pro"를 못 찾는 걸 막음.
+    # 정확 매칭보다는 못하지만(500 offset) 그래도 결과에 나오게.
+    q_norm = re.sub(r"[^a-z0-9가-힣]", "", q)
+    if q_norm:
+        for i, field in enumerate((f.lower() for f in fields if f)):
+            field_norm = re.sub(r"[^a-z0-9가-힣]", "", field)
+            if field_norm == q_norm:
+                return 500 + i * 10 + 0
+            if field_norm.startswith(q_norm):
+                return 500 + i * 10 + 1
+            if q_norm in field_norm:
+                return 500 + i * 10 + 2
     return 999
 
 
@@ -1494,7 +1507,7 @@ def main() -> None:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p_search.add_argument("query")
+    p_search.add_argument("query", nargs="+", help="따로 쳐도 됨(예: jige search Input Source Pro) — 합쳐서 검색")
     p_search.add_argument(
         "--mas", action="store_true",
         help="이번 한 번만 Mac App Store도 뒤짐 ('jige config mas on' 없이 일회성으로 켜는 옵션)"
@@ -1531,7 +1544,7 @@ def main() -> None:
     if args.command == "install":
         cmd_install(args.token, mas=args.mas, latest=args.latest, find_legacy=args.find_legacy)
     elif args.command == "search":
-        cmd_search(args.query, mas=args.mas)
+        cmd_search(" ".join(args.query), mas=args.mas)
     elif args.command == "config":
         cmd_config(args.key, args.value)
     elif args.command == "info":
