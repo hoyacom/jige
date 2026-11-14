@@ -5,6 +5,9 @@
 - 탭 자동완성 (zsh, bash). 설치할 때 자동으로 연결되고, `JIGE_NO_MODIFY_RC=1`이면 설정 파일을 건드리지 않음
 - `jige completion zsh|bash` 추가
 - Homebrew 인덱스를 gzip으로 받고, 바뀌지 않았으면 다시 받지 않음 (cask 인덱스 19.4MB → 2.1MB)
+- 다운로드가 `.pkg` 파일 하나인 앱(Tailscale 등) 설치가 실패하던 문제 수정
+- uninstall: 레시피의 uninstall 단계(앱 종료, 로그인 항목, launchctl, pkgutil 기록 기반 파일 삭제 등)를
+  Homebrew와 같은 순서로 실행 — `.pkg`로 설치한 앱도 제거됨. `--zap`의 와일드카드 경로도 처리
 
 ## 0.2.1
 

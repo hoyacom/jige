@@ -1078,14 +1078,32 @@ def download(url: str, dest: Path) -> None:
     tmp.rename(dest)
 
 
+def downloaded_kind(path: Path) -> str:
+    """받은 파일이 실제로 뭔지 앞부분 바이트로 판별: 'pkg' | 'zip' | 'dmg'.
+    cask의 url은 DMG일 수도, .pkg 파일 하나일 수도(Tailscale 등), zip일 수도 있음 —
+    확장자 대신 내용으로 봄(URL에 확장자가 없는 경우도 있어서)."""
+    with open(path, "rb") as f:
+        head = f.read(4)
+    if head == b"xar!":  # flat .pkg는 xar 아카이브
+        return "pkg"
+    if head == b"PK\x03\x04":
+        return "zip"
+    return "dmg"  # DMG는 앞부분 표식이 없음(끝에 있음) — 나머지는 DMG로 보고 hdiutil에 맡김
+
+
 def attach_dmg(dmg_path: Path, label: str) -> Path:
     mount_point = Path("/Volumes") / f"jige-{label}"
     subprocess.run(["hdiutil", "detach", str(mount_point)], capture_output=True)
-    subprocess.run(
+    result = subprocess.run(
         ["hdiutil", "attach", "-nobrowse", "-quiet",
          "-mountpoint", str(mount_point), str(dmg_path)],
-        check=True,
+        capture_output=True, text=True,
     )
+    if result.returncode != 0:
+        sys.exit(
+            f"디스크 이미지를 열 수 없음: {dmg_path.name}\n"
+            f"  hdiutil: {(result.stderr or result.stdout).strip() or f'종료 코드 {result.returncode}'}"
+        )
     return mount_point
 
 
@@ -1121,7 +1139,12 @@ def install_pkg(mount_point: Path, pkg_artifact: list) -> None:
     pkg_path = mount_point / pkg_filename
     if not pkg_path.exists():
         sys.exit(f"DMG 안에서 {pkg_filename} 을 못 찾음: {list(mount_point.iterdir())}")
+    run_pkg_installer(pkg_path, pkg_artifact)
 
+
+def run_pkg_installer(pkg_path: Path, pkg_artifact: list) -> None:
+    """.pkg 파일 하나를 macOS installer로 설치. DMG 안의 .pkg든, 다운로드 자체가 .pkg든
+    (Tailscale처럼 — 2026-11-14 이걸 DMG로 마운트하려다 실패하던 버그) 여기로 모임."""
     choices = next(
         (extra["choices"] for extra in pkg_artifact[1:]
          if isinstance(extra, dict) and "choices" in extra),
@@ -1139,10 +1162,12 @@ def install_pkg(mount_point: Path, pkg_artifact: list) -> None:
 
     print("관리자 권한(sudo)이 필요합니다 — 비밀번호를 입력하세요.")
     try:
-        subprocess.run(cmd, check=True)
+        result = subprocess.run(cmd)
     finally:
         if choices_plist:
             choices_plist.unlink(missing_ok=True)
+    if result.returncode != 0:
+        sys.exit(f"installer가 실패함(종료 코드 {result.returncode}) — 위 메시지를 확인하세요.")
 
 
 def installed_version(app_path: Path) -> str | None:
@@ -1332,18 +1357,26 @@ def cmd_install(token: str, mas: bool = False, latest: bool = False, find_legacy
         (a["pkg"] for a in recipe.get("artifacts", []) if "pkg" in a), None
     )
 
-    if app_artifact:
+    kind = downloaded_kind(dmg_path)
+    if kind == "zip":
+        sys.exit(f"{token}: zip으로 배포되는 앱은 아직 jige가 설치 못 함 (DMG·.pkg만 지원)")
+
+    if app_artifact and kind == "dmg":
         before = installed_version(Path("/Applications") / app_artifact)
         installed_path = install_dmg(dmg_path, app_artifact)
         after = installed_version(installed_path)
         app_label = installed_path.name  # 레거시판은 .app 번들 이름이 다를 수 있어 실제 설치된 이름을 씀
     elif pkg_artifact:
         before = None  # .pkg는 설치 전/후 버전을 안정적으로 추적하기 어려워 범위 밖
-        mount_point = attach_dmg(dmg_path, token)
-        try:
-            install_pkg(mount_point, pkg_artifact)
-        finally:
-            detach_dmg(mount_point)
+        if kind == "pkg":
+            # 다운로드 자체가 .pkg 파일 하나(Tailscale 등) — 마운트할 게 없으니 바로 설치
+            run_pkg_installer(dmg_path, pkg_artifact)
+        else:
+            mount_point = attach_dmg(dmg_path, token)
+            try:
+                install_pkg(mount_point, pkg_artifact)
+            finally:
+                detach_dmg(mount_point)
         after = recipe.get("version")
         name = recipe.get("name")
         app_label = name[0] if isinstance(name, list) else (name or token)
@@ -1363,6 +1396,10 @@ def cmd_install(token: str, mas: bool = False, latest: bool = False, find_legacy
         "version": after,
         "installed_at": datetime.datetime.now().isoformat(timespec="seconds"),
     }
+    if pkg_artifact and not (app_artifact and kind == "dmg"):
+        # .pkg로 깐 건 /Applications/<이름>을 지우는 걸로 안 끝남 — uninstall이 레시피의
+        # uninstall 단계(pkgutil 등)를 돌려야 한다는 표시
+        state[token]["pkg"] = True
     if legacy_used:
         # macOS 호환 때문에 일부러 구버전으로 깐 것 — list에서도 이 사실이 남아있어야
         # "지금 구버전만 보임, 최신판이 있다는 걸 몰랐음" 같은 상황이 안 생김.
@@ -1435,50 +1472,218 @@ def move_to_trash(path: Path) -> Path:
     return dest
 
 
+# ---------------------------------------------------------------------------
+# uninstall: cask 레시피의 "uninstall" 단계를 Homebrew와 같은 순서로 실행.
+# .app 하나 복사한 앱은 휴지통행으로 끝나지만, .pkg로 깐 앱(Tailscale, VirtualBox 등)은
+# 시스템 곳곳에 파일·서비스를 깔아서 레시피에 적힌 정리 단계(pkgutil 영수증 기반 파일
+# 삭제, launchctl 서비스 내리기 등)를 돌려야 깨끗이 지워짐. 새 포맷을 만들지 않고 cask의
+# 키 이름(quit/launchctl/login_item/script/pkgutil/delete/trash/rmdir)을 그대로 읽음.
+# ---------------------------------------------------------------------------
+
+# 실수로라도 절대 지우면 안 되는 디렉터리 — pkgutil 영수증의 빈 디렉터리 정리나 delete 경로가
+# 이걸 가리키면 건너뜀 (Homebrew도 비슷한 보호 목록을 둠)
+PROTECTED_DIRS = {
+    "/", "/Applications", "/Library", "/System", "/Users", "/bin", "/sbin", "/usr", "/usr/bin",
+    "/usr/sbin", "/usr/lib", "/usr/libexec", "/usr/share", "/usr/local", "/usr/local/bin",
+    "/usr/local/lib", "/usr/local/share", "/usr/local/share/man", "/opt", "/private", "/etc",
+    "/var", "/tmp", "/Library/Application Support", "/Library/LaunchAgents",
+    "/Library/LaunchDaemons", "/Library/Preferences", "/Library/PrivilegedHelperTools",
+    "/Library/Extensions", "/Library/Frameworks", "/Library/Caches", "/Library/Logs",
+    "/Library/SystemExtensions", "/Library/Application Scripts", "/Library/Group Containers",
+    *(f"/usr/local/share/man/man{n}" for n in range(1, 10)),
+}
+UNINSTALL_ORDER = ["early_script", "launchctl", "quit", "signal", "login_item", "kext",
+                   "script", "pkgutil", "delete", "trash", "rmdir"]
+
+
+def _as_list(value) -> list:
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _expand(raw: str) -> list[Path]:
+    """~ 확장 + 와일드카드(레시피에 '~/Library/Application Scripts/*.io.x' 같은 게 있음)."""
+    import glob
+    s = os.path.expanduser(raw)
+    if any(c in s for c in "*?["):
+        return [Path(p) for p in sorted(glob.glob(s))]
+    return [Path(s)]
+
+
+def _is_protected(p: Path) -> bool:
+    s = os.path.normpath(str(p))
+    return s in PROTECTED_DIRS or s == str(Path.home()) or s.count("/") < 2
+
+
+def _sudo(cmd: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(["sudo", *cmd], capture_output=True, text=True)
+
+
+def _remove_path(p: Path, label: str) -> None:
+    if _is_protected(p):
+        print(f"{label}: {p} 는 보호된 경로라 건너뜀")
+        return
+    if not (p.exists() or p.is_symlink()):
+        return
+    try:
+        if p.is_dir() and not p.is_symlink():
+            shutil.rmtree(p)
+        else:
+            p.unlink()
+    except PermissionError:
+        r = _sudo(["rm", "-rf", str(p)])
+        if r.returncode != 0:
+            print(f"{label}: {p} 삭제 실패 — {r.stderr.strip()}")
+            return
+    print(f"{label}: {p} 삭제")
+
+
+def _uninstall_pkgutil(pattern: str) -> None:
+    """설치 영수증(pkgutil)에 기록된 파일만 지우고, 비게 된 디렉터리를 정리한 뒤 영수증을 지움."""
+    ids = subprocess.run(["pkgutil", f"--pkgs={pattern}"], capture_output=True, text=True).stdout.split()
+    if not ids:
+        print(f"pkgutil: '{pattern}' 설치 기록 없음(건너뜀)")
+        return
+    for pkg_id in ids:
+        info = subprocess.run(["pkgutil", "--pkg-info-plist", pkg_id], capture_output=True)
+        try:
+            meta = plistlib.loads(info.stdout)
+        except Exception:
+            print(f"pkgutil: {pkg_id} 정보 읽기 실패(건너뜀)")
+            continue
+        base = Path(meta.get("volume", "/")) / meta.get("install-location", "").lstrip("/")
+        def listing(flag: str) -> list[Path]:
+            out = subprocess.run(["pkgutil", flag, "--files", pkg_id], capture_output=True, text=True).stdout
+            return [base / line for line in out.splitlines() if line.strip()]
+        files = [f for f in listing("--only-files") if f.exists() or f.is_symlink()]
+        dirs = sorted(listing("--only-dirs"), key=lambda d: len(d.parts), reverse=True)
+        print(f"pkgutil: {pkg_id} — 파일 {len(files)}개 삭제")
+        for i in range(0, len(files), 200):  # 명령줄 길이 제한 때문에 나눠서
+            chunk = [str(f) for f in files[i:i + 200] if not _is_protected(f)]
+            if chunk:
+                r = _sudo(["rm", "-f", *chunk])
+                if r.returncode != 0:
+                    print(f"  일부 삭제 실패: {r.stderr.strip()[:200]}")
+        for d in dirs:
+            if d.is_dir() and not d.is_symlink() and not _is_protected(d):
+                _sudo(["rmdir", str(d)])  # 비어 있을 때만 지워짐 — 다른 것도 들어 있으면 그대로 둠
+        _sudo(["pkgutil", "--forget", pkg_id])
+
+
+def _launchctl_remove(label: str) -> None:
+    uid = os.getuid()
+    for domain, use_sudo in ((f"gui/{uid}", False), ("system", True)):
+        target = f"{domain}/{label}"
+        check = (_sudo if use_sudo else lambda c: subprocess.run(c, capture_output=True, text=True))
+        if check(["launchctl", "print", target]).returncode == 0:
+            check(["launchctl", "bootout", target])
+            print(f"launchctl: {target} 내림")
+    for plist in (Path.home() / "Library/LaunchAgents", Path("/Library/LaunchAgents"),
+                  Path("/Library/LaunchDaemons")):
+        _remove_path(plist / f"{label}.plist", "launchctl")
+
+
+def run_uninstall_steps(steps: list[dict]) -> None:
+    by_key: dict[str, list] = {}
+    for entry in steps:
+        for key, value in entry.items():
+            by_key.setdefault(key, []).extend(_as_list(value))
+    if any(k in by_key for k in ("pkgutil", "delete", "rmdir", "launchctl", "script", "early_script")):
+        print("관리자 권한(sudo)이 필요할 수 있습니다 — 비밀번호를 물으면 입력하세요.")
+        subprocess.run(["sudo", "-v"])
+    for key in UNINSTALL_ORDER:
+        for value in by_key.get(key, []):
+            if key == "quit":
+                running = subprocess.run(
+                    ["osascript", "-e", f'application id "{value}" is running'],
+                    capture_output=True, text=True).stdout.strip()
+                if running == "true":
+                    subprocess.run(["osascript", "-e", f'tell application id "{value}" to quit'],
+                                   capture_output=True)
+                    print(f"quit: {value} 종료")
+            elif key == "launchctl":
+                _launchctl_remove(value)
+            elif key == "login_item":
+                r = subprocess.run(
+                    ["osascript", "-e", f'tell application "System Events" to delete login item "{value}"'],
+                    capture_output=True, text=True)
+                if r.returncode == 0:
+                    print(f"login_item: {value} 제거")
+            elif key in ("script", "early_script"):
+                spec = value if isinstance(value, dict) else {"executable": value}
+                exe = Path(os.path.expanduser(spec.get("executable", "")))
+                if exe.exists():
+                    cmd = [str(exe), *[str(a) for a in _as_list(spec.get("args"))]]
+                    print(f"{key}: {' '.join(cmd)}")
+                    subprocess.run(["sudo", *cmd] if spec.get("sudo") else cmd)
+            elif key == "pkgutil":
+                _uninstall_pkgutil(value)
+            elif key == "delete":
+                for p in _expand(value):
+                    _remove_path(p, "delete")
+            elif key == "trash":
+                for p in _expand(value):
+                    if (p.exists() or p.is_symlink()) and not _is_protected(p):
+                        try:
+                            print(f"trash: {p} -> 휴지통({move_to_trash(p)})")
+                        except PermissionError:
+                            _remove_path(p, "trash")
+            elif key == "rmdir":
+                for p in _expand(value):
+                    if p.is_dir() and not _is_protected(p):
+                        _sudo(["rmdir", str(p)])
+            else:  # signal, kext — 지금은 직접 처리 안 함(드묾, kext는 macOS가 더 이상 권장 안 함)
+                print(f"({key} 단계는 jige가 아직 처리 안 함 — 건너뜀: {value})")
+
+
 def cmd_uninstall(token: str, zap: bool = False) -> None:
     state = load_state()
-    app_name = (state.get(token) or {}).get("app")
-    recipe = None
-    if not app_name or zap:
-        # jige로 추적 안 된 설치본이어도, 레시피에서 앱 이름을 추론해 시도
-        # --zap이면 레시피의 zap 목록(부가 파일 경로)도 필요해서 어차피 가져옴
+    entry = state.get(token) or {}
+    try:
         recipe, _ = fetch_recipe(token)
-        if not app_name:
-            app_name = next(
-                (a["app"][0] for a in recipe.get("artifacts", []) if "app" in a), None
-            )
-    if not app_name:
-        sys.exit(f"'{token}'의 앱 이름을 찾을 수 없음 — 수동으로 /Applications에서 지워야 함")
+    except (SystemExit, Exception):
+        if not entry:
+            raise
+        recipe = {}  # 오프라인 등 — 기록된 .app만이라도 지움
+        print("(레시피를 못 가져옴 — 기록된 앱만 지웁니다)")
+    artifacts = recipe.get("artifacts", [])
 
-    app_path = Path("/Applications") / app_name
-    if not app_path.exists():
-        print(f"{app_path} 가 이미 없습니다.")
-    else:
-        dest = move_to_trash(app_path)
-        print(f"{app_path} -> 휴지통({dest})")
+    # 1. 레시피의 uninstall 단계 (.pkg 앱은 여기서 실제 파일이 지워짐)
+    steps = [s for a in artifacts for s in a.get("uninstall", [])]
+    if steps:
+        run_uninstall_steps(steps)
+    elif entry.get("pkg"):
+        print("이 레시피엔 uninstall 단계가 없어서 .pkg가 깐 파일은 직접 지워야 할 수 있습니다.")
+
+    # 2. .app (휴지통행). .pkg로 깐 경우 기록된 'app'은 앱 이름일 뿐 경로가 아님
+    app_names = [a["app"][0] for a in artifacts if "app" in a]
+    if not app_names and entry.get("app", "").endswith(".app"):
+        app_names = [entry["app"]]
+    for app_name in app_names:
+        app_path = Path("/Applications") / Path(app_name).name
+        if app_path.exists():
+            print(f"{app_path} -> 휴지통({move_to_trash(app_path)})")
+        elif not steps:
+            print(f"{app_path} 가 이미 없습니다.")
+    if not app_names and not steps:
+        sys.exit(f"'{token}'을(를) 지우는 방법을 레시피에서 못 찾음 — 수동으로 지워야 함")
 
     if zap:
         # brew uninstall --zap과 동일: 레시피에 적힌 설정/캐시/로그 등 부가 경로까지 정리
-        if recipe is None:
-            recipe, _ = fetch_recipe(token)
-        zap_paths: list[str] = []
-        for artifact in recipe.get("artifacts", []):
-            for zap_entry in artifact.get("zap", []):
-                zap_paths.extend(zap_entry.get("trash", []))
-        if not zap_paths:
+        zap_steps = [s for a in artifacts for s in a.get("zap", [])]
+        if not zap_steps:
             print("(zap: 이 레시피엔 정리할 부가 경로가 없음)")
-        for raw in zap_paths:
-            p = Path(raw.replace("~", str(Path.home()), 1)) if raw.startswith("~") else Path(raw)
-            if p.exists():
-                dest = move_to_trash(p)
-                print(f"zap: {p} -> 휴지통({dest})")
-            else:
-                print(f"zap: {p} 없음(건너뜀)")
+        run_uninstall_steps(zap_steps)
 
     if token in state:
         del state[token]
         save_state(state)
-    print(f"완료: {token} 제거(휴지통행, 영구삭제 아님)")
+    if steps:
+        # pkgutil/delete로 지운 시스템 파일은 휴지통에 안 감(brew도 같음) — 오해 없게 구분
+        print(f"완료: {token} 제거 (앱은 휴지통, 설치 패키지가 깐 파일은 삭제)")
+    else:
+        print(f"완료: {token} 제거(휴지통행, 영구삭제 아님)")
 
 
 def cmd_update() -> None:
