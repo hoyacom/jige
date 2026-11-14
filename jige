@@ -1078,26 +1078,158 @@ def download(url: str, dest: Path) -> None:
     tmp.rename(dest)
 
 
-def downloaded_kind(path: Path) -> str:
-    """받은 파일이 실제로 뭔지 앞부분 바이트로 판별: 'pkg' | 'zip' | 'dmg'.
-    cask의 url은 DMG일 수도, .pkg 파일 하나일 수도(Tailscale 등), zip일 수도 있음 —
-    확장자 대신 내용으로 봄(URL에 확장자가 없는 경우도 있어서)."""
+# ===========================================================================
+# 설치 = ① 포장 풀기 + ② 아티팩트 설치, 두 단계로 분리 — Homebrew와 같은 구조.
+#   ① Library/Homebrew/unpack_strategy/  : 받은 파일을 "내용"으로 판별해서 임시 폴더에 풂
+#   ② Library/Homebrew/cask/artifact/    : 풀린 폴더에서 레시피의 app/pkg/installer/suite 실행
+# 포장 형태(dmg/zip/tar/pkg/…)와 설치 방식(app/pkg/…)이 서로 독립이라 어떤 조합이든 동작함.
+# (그 전엔 "DMG면 이렇게, .pkg면 저렇게"를 경우마다 덧붙여서 zip 앱·.pkg 단독 등에서 깨졌음)
+# 규칙은 Homebrew(BSD-2-Clause, Copyright Homebrew contributors) 코드를 읽고 Python으로 다시 구현.
+# ===========================================================================
+
+APPDIR = Path(os.environ.get("JIGE_APPDIR", "/Applications"))  # brew --appdir 와 같은 역할
+
+# DMG에서 꺼내 오지 않을 것들 (brew unpack_strategy/dmg.rb의 DMG_METADATA와 같음)
+DMG_METADATA = {
+    ".background", ".com.apple.timemachine.donotpresent", ".com.apple.timemachine.supported",
+    ".DocumentRevisions-V100", ".DS_Store", ".fseventsd", ".MobileBackups", ".Spotlight-V100",
+    ".TemporaryItems", ".Trashes", ".VolumeIcon.icns", ".HFS+ Private Directory Data\r",
+    ".journal", ".journal_info_block",
+}
+
+# 지금은 못 푸는 포장 — macOS 기본 도구로 안 되거나(별도 프로그램 필요) 거의 안 쓰임
+UNSUPPORTED_CONTAINERS = {"7z": "7-Zip", "rar": "RAR", "sit": "StuffIt", "cab": "CAB"}
+
+
+class UnsupportedInstall(Exception):
+    """레시피는 정상인데 jige가 아직 처리 못 하는 형태 — traceback 대신 이유를 보여주려고."""
+
+
+def detect_container(path: Path) -> str:
+    """받은 파일 종류를 앞부분 바이트로 판별 (brew UnpackStrategy.detect와 같은 순서·기준).
+    반환: 'tar' | 'dmg' | 'zip' | 'xar' | 'uncompressed' | UNSUPPORTED_CONTAINERS의 키"""
+    if path.is_dir():
+        return "directory"
     with open(path, "rb") as f:
-        head = f.read(4)
-    if head == b"xar!":  # flat .pkg는 xar 아카이브
-        return "pkg"
-    if head == b"PK\x03\x04":
+        head = f.read(512)
+    if head[257:262] == b"ustar":
+        return "tar"
+    compressed = (head.startswith(b"\x1f\x8b") or head.startswith(b"\xfd7zXZ\x00")
+                  or head.startswith(b"BZh") or head.startswith(b"\x28\xb5\x2f\xfd"))
+    if compressed and subprocess.run(["tar", "-tf", str(path)], capture_output=True).returncode == 0:
+        return "tar"  # tar.gz / tar.xz / tar.bz2 / tar.zst — bsdtar가 압축 종류를 알아서 처리
+    if head.startswith(b"PK\x03\x04") or head.startswith(b"PK\x05\x06"):
         return "zip"
-    return "dmg"  # DMG는 앞부분 표식이 없음(끝에 있음) — 나머지는 DMG로 보고 hdiutil에 맡김
+    if head.startswith(b"xar!"):
+        return "xar"  # flat .pkg도 xar
+    if head.startswith(b"7z\xbc\xaf\x27\x1c"):
+        return "7z"
+    if head.startswith(b"Rar!"):
+        return "rar"
+    if head.startswith(b"SIT!") or head[:8] == b"StuffIt ":
+        return "sit"
+    if head.startswith(b"MSCF"):
+        return "cab"
+    if subprocess.run(["hdiutil", "imageinfo", "-format", str(path)],
+                      capture_output=True).returncode == 0:
+        return "dmg"
+    return "uncompressed"  # 실행파일·폰트·앱 바이너리 등 포장 안 된 파일 그 자체
+
+
+def _copy_tree_item(src: Path, dest_dir: Path) -> None:
+    subprocess.run(["ditto", str(src), str(dest_dir / src.name)], check=True)
+
+
+def _extract_dmg(path: Path, to: Path) -> None:
+    mount_point = attach_dmg(path, f"stage-{os.getpid()}")
+    try:
+        for child in mount_point.iterdir():
+            if child.name in DMG_METADATA:
+                continue
+            # DMG에 흔히 있는 "/Applications로 가는 바로가기"는 꺼내지 않음 (brew도 같음)
+            if child.is_symlink() and os.readlink(child).startswith("/"):
+                continue
+            _copy_tree_item(child, to)
+    finally:
+        detach_dmg(mount_point)
+
+
+def extract_once(path: Path, kind: str, to: Path, basename: str) -> None:
+    to.mkdir(parents=True, exist_ok=True)
+    if kind == "dmg":
+        _extract_dmg(path, to)
+    elif kind == "zip":
+        # ditto는 Apple 기본 도구 — zip 안의 확장 속성·__MACOSX 리소스 포크까지 제대로 처리
+        subprocess.run(["ditto", "-x", "-k", str(path), str(to)], check=True)
+    elif kind == "tar":
+        subprocess.run(["tar", "-xf", str(path), "-C", str(to), "--no-same-owner"], check=True)
+    elif kind == "directory":
+        _copy_tree_item(path, to)
+    else:  # uncompressed / xar(.pkg) — 풀지 않고 원래 파일 이름 그대로 둠
+        subprocess.run(["ditto", str(path), str(to / basename)], check=True)
+
+
+def extract_nestedly(path: Path, to: Path, basename: str, keep_xar: bool) -> None:
+    """brew extract_nestedly: 풀었는데 결과가 파일 하나뿐이면(예: zip 안에 dmg) 그것도 이어서 풂."""
+    kind = detect_container(path)
+    if kind in UNSUPPORTED_CONTAINERS:
+        raise UnsupportedInstall(f"{UNSUPPORTED_CONTAINERS[kind]} 압축 파일은 아직 풀 수 없음")
+    if kind == "xar" and not keep_xar:
+        kind = "xar-extract"
+    if kind in ("uncompressed", "xar", "directory"):
+        extract_once(path, kind, to, basename)
+        return
+    if kind == "xar-extract":
+        to.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["xar", "-x", "-f", str(path), "-C", str(to)], check=True)
+        return
+    with tempfile.TemporaryDirectory(prefix="jige-unpack-") as tmp:
+        tmp_path = Path(tmp)
+        extract_once(path, kind, tmp_path, basename)
+        children = list(tmp_path.iterdir())
+        if len(children) == 1 and children[0].is_file() and not children[0].is_symlink():
+            extract_nestedly(children[0], to, children[0].name, keep_xar)
+            return
+        to.mkdir(parents=True, exist_ok=True)
+        for child in children:
+            shutil.move(str(child), str(to / child.name))
+
+
+def stage_download(download_path: Path, url: str, recipe: dict, staged: Path) -> None:
+    """① 포장 풀기 — brew Cask::Download#extract_primary_container 와 같은 흐름.
+    container.type이 naked/nounzip이면 풀지 않음, container.nested면 한 겹 더 들어가서 풂."""
+    basename = urllib.parse.unquote(url.rsplit("/", 1)[-1].split("?")[0]) or download_path.name
+    container = recipe.get("container") or {}
+    # .pkg 아티팩트가 있으면 xar(.pkg)는 풀지 말고 파일 그대로 둬야 installer에 넘길 수 있음
+    keep_xar = any("pkg" in a for a in recipe.get("artifacts", []))
+    if container.get("type") in ("naked", "nounzip"):
+        extract_once(download_path, "uncompressed", staged, basename)
+    elif container.get("nested"):
+        with tempfile.TemporaryDirectory(prefix="jige-outer-") as tmp:
+            outer = Path(tmp)
+            extract_once(download_path, detect_container(download_path), outer, basename)
+            nested = outer / container["nested"]
+            if not nested.exists():
+                raise UnsupportedInstall(f"레시피가 말한 안쪽 파일이 없음: {container['nested']}")
+            extract_nestedly(nested, staged, nested.name, keep_xar)
+    else:
+        extract_nestedly(download_path, staged, basename, keep_xar)
+    # cask의 rename (예: "Android Studio*.app" -> "Android Studio Preview Canary.app")
+    for op in recipe.get("rename") or []:
+        matches = sorted(staged.glob(op["from"]))
+        if matches:
+            matches[0].rename(staged / op["to"])
 
 
 def attach_dmg(dmg_path: Path, label: str) -> Path:
-    mount_point = Path("/Volumes") / f"jige-{label}"
+    mount_point = Path(tempfile.gettempdir()) / f"jige-{label}"
     subprocess.run(["hdiutil", "detach", str(mount_point)], capture_output=True)
+    mount_point.mkdir(parents=True, exist_ok=True)
+    # 라이선스 동의창(EULA)이 붙은 DMG는 표준입력으로 동의를 기다림 — brew처럼 'Y'로 넘김
     result = subprocess.run(
-        ["hdiutil", "attach", "-nobrowse", "-quiet",
+        ["hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen", "-quiet",
          "-mountpoint", str(mount_point), str(dmg_path)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, input="Y\n",
     )
     if result.returncode != 0:
         sys.exit(
@@ -1108,43 +1240,136 @@ def attach_dmg(dmg_path: Path, label: str) -> Path:
 
 
 def detach_dmg(mount_point: Path) -> None:
-    subprocess.run(["hdiutil", "detach", str(mount_point)], capture_output=True)
-
-
-def install_dmg(dmg_path: Path, app_name: str) -> Path:
-    mount_point = attach_dmg(dmg_path, app_name)
+    if subprocess.run(["hdiutil", "detach", str(mount_point)], capture_output=True).returncode != 0:
+        # 앱이 파일을 잡고 있어서 안 풀리는 경우가 있음 — brew도 강제로 다시 시도
+        subprocess.run(["hdiutil", "detach", "-force", str(mount_point)], capture_output=True)
     try:
-        src = mount_point / app_name
-        if not src.exists():
-            candidates = list(mount_point.glob("*.app"))
-            if not candidates:
-                sys.exit(f"DMG 안에서 {app_name} 을 못 찾음: {list(mount_point.iterdir())}")
-            src = candidates[0]
-        dest = Path("/Applications") / src.name
-        if dest.exists():
-            print(f"기존 {dest} 교체 (새 버전으로 덮어씀)")
-            shutil.rmtree(dest)
-        print(f"{src} -> {dest}")
-        shutil.copytree(src, dest, symlinks=True)
-    finally:
-        detach_dmg(mount_point)
-    return dest
+        mount_point.rmdir()
+    except OSError:
+        pass
 
 
-def install_pkg(mount_point: Path, pkg_artifact: list) -> None:
-    """cask의 {"pkg": ["X.pkg", {"choices": [...]}]} 아티팩트를 그대로 설치.
-    .app을 /Applications에 복사하는 게 아니라 pre/postflight 스크립트가 있는
-    설치 패키지라서 installer(sudo 필요)를 그대로 호출한다."""
-    pkg_filename = pkg_artifact[0]
-    pkg_path = mount_point / pkg_filename
-    if not pkg_path.exists():
-        sys.exit(f"DMG 안에서 {pkg_filename} 을 못 찾음: {list(mount_point.iterdir())}")
-    run_pkg_installer(pkg_path, pkg_artifact)
+# ---------------------------------------------------------------------------
+# ② 아티팩트 설치 (brew cask/artifact/*.rb 기준). 지원: app, suite, pkg, installer.
+# 나머지(binary·폰트·플러그인 등)는 이유를 밝히고 건너뜀 — 앱(jim) 범위 밖이거나 다음 단계.
+# ---------------------------------------------------------------------------
+
+SUPPORTED_ARTIFACTS = {"app", "suite", "pkg", "installer"}
+# 설치 단계가 아닌 키(제거·정리용) — "미지원"으로 세지 않음
+NON_INSTALL_KEYS = {"uninstall", "zap", "uninstall_preflight_steps", "uninstall_postflight_steps"}
+SKIP_LABELS = {
+    "binary": "CLI 명령 연결", "manpage": "man 페이지", "bash_completion": "bash 자동완성",
+    "zsh_completion": "zsh 자동완성", "fish_completion": "fish 자동완성",
+    "generate_completions_from_executable": "자동완성 생성", "command_wrapper": "CLI 명령 연결",
+    "font": "폰트", "qlplugin": "Quick Look 플러그인", "screen_saver": "화면 보호기",
+    "prefpane": "환경설정 패널", "service": "서비스", "input_method": "입력기",
+    "keyboard_layout": "키보드 배치", "dictionary": "사전", "colorpicker": "색상 선택기",
+    "vst_plugin": "VST 플러그인", "vst3_plugin": "VST3 플러그인", "audio_unit_plugin": "오디오 유닛",
+    "artifact": "임의 파일 배치", "app_image": "AppImage", "generated_script": "생성 스크립트",
+    "preflight_steps": "설치 전 단계", "postflight_steps": "설치 후 단계",
+}
+
+
+def _expand_cask_path(raw: str, token: str, version: str, staged: Path) -> Path:
+    """레시피 경로 속 변수 풀기: $HOMEBREW_PREFIX/Caskroom/<token>/<version> = 풀어둔 폴더,
+    $APPDIR = 앱 폴더, ~ = 홈. 레시피의 target은 brew가 /Applications로 계산해 둔 값이라
+    JIGE_APPDIR을 바꾼 경우 그 앞부분만 갈아끼움."""
+    s = raw.replace(f"$HOMEBREW_PREFIX/Caskroom/{token}/{version}", str(staged))
+    s = s.replace("$APPDIR", str(APPDIR))
+    if s == "/Applications" or s.startswith("/Applications/"):
+        s = str(APPDIR) + s[len("/Applications"):]
+    return Path(os.path.expanduser(s))
+
+
+def plan_artifacts(recipe: dict) -> tuple[list[tuple[str, list, dict]], list[str]]:
+    """레시피 artifacts -> (설치할 것 [(종류, 값, 원본 dict)], 건너뛸 것 설명 목록)."""
+    todo, skipped = [], []
+    for art in recipe.get("artifacts", []):
+        for key, value in art.items():
+            if key == "target" or key in NON_INSTALL_KEYS:
+                continue
+            if key in SUPPORTED_ARTIFACTS:
+                todo.append((key, value, art))
+            else:
+                label = SKIP_LABELS.get(key, key)
+                name = value[0] if isinstance(value, list) and value and isinstance(value[0], str) else ""
+                skipped.append(f"{label}{f' ({name})' if name else ''}")
+    return todo, skipped
+
+
+def _place(src: Path, target: Path) -> None:
+    """풀어둔 폴더의 앱/폴더를 설치 위치로 — 이미 있으면 기존 것은 휴지통으로."""
+    if not src.exists():
+        have = ", ".join(p.name for p in src.parent.iterdir()) if src.parent.is_dir() else "?"
+        raise UnsupportedInstall(f"풀린 파일 안에서 '{src.name}'을 못 찾음 (있는 것: {have})")
+    if target.exists() or target.is_symlink():
+        print(f"기존 {target} -> 휴지통({move_to_trash(target)})")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    print(f"{src.name} -> {target}")
+    if subprocess.run(["ditto", str(src), str(target)]).returncode != 0:
+        print("(권한이 없어서 sudo로 다시 시도)")
+        subprocess.run(["sudo", "ditto", str(src), str(target)], check=True)
+
+
+def install_artifacts(token: str, recipe: dict, staged: Path) -> dict:
+    """반환: 설치 결과 {"apps": [설치된 경로], "pkg": bool, "manual": 경로|None}"""
+    version = str(recipe.get("version", ""))
+    todo, skipped = plan_artifacts(recipe)
+    if not todo:
+        raise UnsupportedInstall(
+            "jige가 아직 지원하지 않는 설치 방식만 있음: " + ", ".join(skipped or ["(없음)"]))
+    result: dict = {"apps": [], "pkg": False, "manual": None}
+    for key, value, art in todo:
+        if key in ("app", "suite"):
+            # 원본도 변수를 품을 수 있음 — 예: suite가 "$HOMEBREW_PREFIX/Caskroom/<token>/<ver>"
+            # (= 풀어둔 폴더 전체)를 통째로 앱 폴더로 옮기는 레시피(magicavoxel 등)
+            src = (_expand_cask_path(value[0], token, version, staged) if "$" in value[0]
+                   else staged / value[0])
+            target_raw = art.get("target") or next(
+                (v["target"] for v in value[1:] if isinstance(v, dict) and "target" in v), None)
+            target = (_expand_cask_path(target_raw, token, version, staged) if target_raw
+                      else APPDIR / Path(value[0]).name)
+            if not target.is_absolute():
+                target = APPDIR / target
+            _place(src, target)
+            result["apps"].append(str(target))
+        elif key == "pkg":
+            pkg_path = staged / value[0]
+            if not pkg_path.exists():
+                raise UnsupportedInstall(f"풀린 파일 안에서 {value[0]}을 못 찾음")
+            run_pkg_installer(pkg_path, value)
+            result["pkg"] = True
+        elif key == "installer":
+            for spec in value:
+                if "manual" in spec:
+                    # 설치 프로그램을 사람이 직접 눌러야 하는 앱 — 풀어둔 걸 남겨두고 열어줌
+                    keep = CACHE_DIR.parent / "staged" / token
+                    if keep.exists():
+                        shutil.rmtree(keep)
+                    shutil.copytree(staged, keep, symlinks=True)
+                    path = keep / spec["manual"]
+                    print(f"이 앱은 설치 프로그램을 직접 실행해야 합니다 — 여는 중: {path}")
+                    subprocess.run(["open", str(path)])
+                    result["manual"] = str(path)
+                elif "script" in spec:
+                    s = spec["script"] if isinstance(spec["script"], dict) else {"executable": spec["script"]}
+                    exe = _expand_cask_path(s["executable"], token, version, staged)
+                    if not exe.is_absolute():
+                        exe = staged / s["executable"]
+                    cmd = [str(exe), *[str(a) for a in s.get("args", [])]]
+                    if s.get("sudo"):
+                        print("관리자 권한(sudo)이 필요합니다 — 비밀번호를 입력하세요.")
+                        cmd = ["sudo", *cmd]
+                    print(f"설치 스크립트 실행: {exe.name}")
+                    if subprocess.run(cmd).returncode != 0 and s.get("must_succeed", True):
+                        sys.exit("설치 스크립트가 실패함 — 위 메시지를 확인하세요.")
+    for note in skipped:
+        print(f"(건너뜀: {note} — jige가 아직 처리 안 하는 단계)")
+    return result
 
 
 def run_pkg_installer(pkg_path: Path, pkg_artifact: list) -> None:
-    """.pkg 파일 하나를 macOS installer로 설치. DMG 안의 .pkg든, 다운로드 자체가 .pkg든
-    (Tailscale처럼 — 2026-11-14 이걸 DMG로 마운트하려다 실패하던 버그) 여기로 모임."""
+    """.pkg 파일 하나를 macOS installer로 설치 (brew cask/artifact/pkg.rb와 같이 choices 지원)."""
     choices = next(
         (extra["choices"] for extra in pkg_artifact[1:]
          if isinstance(extra, dict) and "choices" in extra),
@@ -1336,6 +1561,12 @@ def cmd_install(token: str, mas: bool = False, latest: bool = False, find_legacy
     if macos_min:
         check_macos_requirement(macos_min[0], token)
 
+    todo, skipped = plan_artifacts(recipe)
+    if not todo:
+        # 받기 전에 먼저 확인 — 어차피 못 까는 걸 수십 MB 받지 않게
+        sys.exit(f"{token}: jige가 아직 지원하지 않는 설치 방식입니다 — {', '.join(skipped) or '설치 항목 없음'}\n"
+                 f"(지원: 앱(.app), 앱 폴더(suite), 설치 패키지(.pkg), 설치 프로그램(installer))")
+
     url, sha = pick_url_sha(recipe, cpu, codename)
     print(f"선택된 다운로드: {url}")
 
@@ -1350,45 +1581,31 @@ def cmd_install(token: str, mas: bool = False, latest: bool = False, find_legacy
         sys.exit(f"sha256 불일치! 기대값={sha} 실제값={actual_sha} — 다운로드 파일 삭제, 설치 중단.")
     print("sha256 체크섬 일치 확인됨.")
 
-    app_artifact = next(
-        (a["app"][0] for a in recipe.get("artifacts", []) if "app" in a), None
-    )
-    pkg_artifact = next(
-        (a["pkg"] for a in recipe.get("artifacts", []) if "pkg" in a), None
-    )
+    # 설치 전 버전 (app 아티팩트가 있으면 그 위치의 Info.plist로)
+    first_app_target = next((_expand_cask_path(a.get("target") or f"/Applications/{Path(v[0]).name}",
+                                               token, str(recipe.get("version", "")), Path("/"))
+                             for k, v, a in todo if k == "app"), None)
+    before = installed_version(first_app_target) if first_app_target else None
 
-    kind = downloaded_kind(dmg_path)
-    if kind == "zip":
-        sys.exit(f"{token}: zip으로 배포되는 앱은 아직 jige가 설치 못 함 (DMG·.pkg만 지원)")
+    # ① 포장 풀기 -> ② 아티팩트 설치 (Homebrew와 같은 두 단계)
+    try:
+        with tempfile.TemporaryDirectory(prefix=f"jige-{token}-") as tmp:
+            staged = Path(tmp) / "staged"
+            stage_download(dmg_path, url, recipe, staged)
+            result = install_artifacts(token, recipe, staged)
+    except UnsupportedInstall as e:
+        sys.exit(f"{token}: 설치 못 함 — {e}")
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"{token}: 압축 풀기/복사 중 실패 — {' '.join(map(str, e.cmd))[:200]} (종료 코드 {e.returncode})")
 
-    if app_artifact and kind == "dmg":
-        before = installed_version(Path("/Applications") / app_artifact)
-        installed_path = install_dmg(dmg_path, app_artifact)
-        after = installed_version(installed_path)
+    if result["apps"]:
+        installed_path = Path(result["apps"][0])
+        after = installed_version(installed_path) or recipe.get("version")
         app_label = installed_path.name  # 레거시판은 .app 번들 이름이 다를 수 있어 실제 설치된 이름을 씀
-    elif pkg_artifact:
-        before = None  # .pkg는 설치 전/후 버전을 안정적으로 추적하기 어려워 범위 밖
-        if kind == "pkg":
-            # 다운로드 자체가 .pkg 파일 하나(Tailscale 등) — 마운트할 게 없으니 바로 설치
-            run_pkg_installer(dmg_path, pkg_artifact)
-        else:
-            mount_point = attach_dmg(dmg_path, token)
-            try:
-                install_pkg(mount_point, pkg_artifact)
-            finally:
-                detach_dmg(mount_point)
+    else:
         after = recipe.get("version")
         name = recipe.get("name")
         app_label = name[0] if isinstance(name, list) else (name or token)
-    else:
-        print("레시피에 .app/.pkg 아티팩트가 없음 (아직 미지원 설치 방식)")
-        offer_github_contribution(
-            f"{token}: .app/.pkg 둘 다 아닌 설치 방식",
-            f"토큰: {token}\nmacOS: {codename} ({'.'.join(str(p) for p in macos_version_tuple())})\n"
-            f"아키텍처: {cpu}\n레시피 버전: {recipe.get('version')}\n"
-            f"공식 홈페이지: {recipe.get('homepage', '?')}\n",
-        )
-        sys.exit(1)
 
     state = load_state()
     state[token] = {
@@ -1396,10 +1613,14 @@ def cmd_install(token: str, mas: bool = False, latest: bool = False, find_legacy
         "version": after,
         "installed_at": datetime.datetime.now().isoformat(timespec="seconds"),
     }
-    if pkg_artifact and not (app_artifact and kind == "dmg"):
-        # .pkg로 깐 건 /Applications/<이름>을 지우는 걸로 안 끝남 — uninstall이 레시피의
+    if result["apps"]:
+        state[token]["apps"] = result["apps"]  # uninstall이 정확히 이 경로들을 지움
+    if result["pkg"]:
+        # .pkg로 깐 건 앱 하나 지우는 걸로 안 끝남 — uninstall이 레시피의
         # uninstall 단계(pkgutil 등)를 돌려야 한다는 표시
         state[token]["pkg"] = True
+    if result["manual"]:
+        print(f"(설치 프로그램을 끝까지 진행해 주세요: {result['manual']})")
     if legacy_used:
         # macOS 호환 때문에 일부러 구버전으로 깐 것 — list에서도 이 사실이 남아있어야
         # "지금 구버전만 보임, 최신판이 있다는 걸 몰랐음" 같은 상황이 안 생김.
@@ -1656,17 +1877,24 @@ def cmd_uninstall(token: str, zap: bool = False) -> None:
     elif entry.get("pkg"):
         print("이 레시피엔 uninstall 단계가 없어서 .pkg가 깐 파일은 직접 지워야 할 수 있습니다.")
 
-    # 2. .app (휴지통행). .pkg로 깐 경우 기록된 'app'은 앱 이름일 뿐 경로가 아님
-    app_names = [a["app"][0] for a in artifacts if "app" in a]
-    if not app_names and entry.get("app", "").endswith(".app"):
-        app_names = [entry["app"]]
-    for app_name in app_names:
-        app_path = Path("/Applications") / Path(app_name).name
+    # 2. 앱·앱 폴더(휴지통행). 설치 때 기록한 실제 경로가 있으면 그걸, 없으면(예전 jige로
+    #    설치했거나 기록이 없을 때) 레시피의 target(이름 바꿔 설치하는 앱 포함)으로 계산
+    version = str(recipe.get("version", ""))
+    app_paths = [Path(p) for p in entry.get("apps", [])]
+    if not app_paths:
+        for a in artifacts:
+            for key in ("app", "suite"):
+                if key in a:
+                    raw = a.get("target") or f"/Applications/{Path(a[key][0]).name}"
+                    app_paths.append(_expand_cask_path(raw, token, version, Path("/")))
+    if not app_paths and entry.get("app", "").endswith(".app"):
+        app_paths = [APPDIR / entry["app"]]
+    for app_path in app_paths:
         if app_path.exists():
             print(f"{app_path} -> 휴지통({move_to_trash(app_path)})")
         elif not steps:
             print(f"{app_path} 가 이미 없습니다.")
-    if not app_names and not steps:
+    if not app_paths and not steps:
         sys.exit(f"'{token}'을(를) 지우는 방법을 레시피에서 못 찾음 — 수동으로 지워야 함")
 
     if zap:

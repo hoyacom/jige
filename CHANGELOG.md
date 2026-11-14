@@ -6,6 +6,9 @@
 - `jige completion zsh|bash` 추가
 - Homebrew 인덱스를 gzip으로 받고, 바뀌지 않았으면 다시 받지 않음 (cask 인덱스 19.4MB → 2.1MB)
 - 다운로드가 `.pkg` 파일 하나인 앱(Tailscale 등) 설치가 실패하던 문제 수정
+- 설치를 "포장 풀기 → 설치" 두 단계로 정리: zip·tar.gz·tar.xz·겹친 포장 앱, 앱 폴더(suite),
+  설치 프로그램(installer)도 설치됨. 앱 레시피 기준 설치 가능 범위 약 64% → 96%
+- 테스트용 `JIGE_APPDIR` (앱 설치 위치 바꾸기, brew `--appdir`와 같음)
 - uninstall: 레시피의 uninstall 단계(앱 종료, 로그인 항목, launchctl, pkgutil 기록 기반 파일 삭제 등)를
   Homebrew와 같은 순서로 실행 — `.pkg`로 설치한 앱도 제거됨. `--zap`의 와일드카드 경로도 처리
 
