@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import email.utils
+import gzip
 import hashlib
 import json
 import os
@@ -231,6 +233,11 @@ STRINGS = {
         "ko": "jige 설정 보기/변경 (예: Mac App Store 켜기/끄기)",
         "en": "View/change jige settings (e.g. turn Mac App Store search on/off)",
         "ja": "jigeの設定を表示/変更(例: Mac App Store検索のON/OFF)",
+    },
+    "help_completion": {
+        "ko": "탭 자동완성 스크립트 출력 (예: source <(jige completion zsh))",
+        "en": "Print the shell tab-completion script (e.g. source <(jige completion zsh))",
+        "ja": "タブ補完スクリプトを出力 (例: source <(jige completion zsh))",
     },
 }
 
@@ -508,25 +515,58 @@ def fetch_raw_github(url: str) -> str | None:
 # search: Homebrew(cask+formula, mac+linux 공용) + MacPorts(mac) + 자체 레포지토리
 # ---------------------------------------------------------------------------
 
-def _download_json(url: str, dest: Path) -> None:
-    print(f"(처음 검색이거나 캐시가 24시간 지남 — {dest.name} 새로 받는 중...)", file=sys.stderr)
+def _download_json(url: str, dest: Path) -> bool:
+    """받아서 dest에 저장. 서버에서 바뀐 게 없으면(304) 파일은 그대로 두고 시각만 갱신.
+    반환값: 내용이 실제로 바뀌었으면 True.
+
+    formulae.brew.sh는 남의(Homebrew의) 공짜 인프라라 brew 자신처럼 아껴 씀:
+    - gzip 요청: cask.json이 19.4MB -> 2.1MB(2026-11-14 실측, 약 1/9)
+    - If-Modified-Since: 24시간 지나도 서버 쪽이 안 바뀌었으면 304로 본문 없이 끝남"""
+    print(f"(처음 검색이거나 캐시가 24시간 지남 — {dest.name} 확인 중...)", file=sys.stderr)
+    req = urllib.request.Request(url, headers={"Accept-Encoding": "gzip"})
+    if dest.exists():
+        req.add_header("If-Modified-Since", email.utils.formatdate(dest.stat().st_mtime, usegmt=True))
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            data = r.read()
+            if r.headers.get("Content-Encoding", "").lower() == "gzip":
+                data = gzip.decompress(data)
+    except urllib.error.HTTPError as e:
+        if e.code == 304 and dest.exists():
+            # 탭 자동완성 캐시는 "인덱스보다 새로운가"로 낡음을 판단하니, 내용이 같으면 같이 갱신
+            tokens_fresh = TOKENS_CACHE.exists() and TOKENS_CACHE.stat().st_mtime >= dest.stat().st_mtime
+            os.utime(dest)  # 다음 24시간 동안은 다시 안 물어보게
+            if tokens_fresh:
+                os.utime(TOKENS_CACHE)
+            return False
+        raise
     tmp = dest.with_suffix(dest.suffix + ".part")
-    urllib.request.urlretrieve(url, tmp)
+    tmp.write_bytes(data)
     tmp.rename(dest)
+    return True
 
 
 def load_homebrew_index(kind: str) -> list[dict]:
     """kind: 'cask' 또는 'formula'. 전체 목록을 로컬에 캐시해서 재사용."""
     INDEX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     dest = INDEX_CACHE_DIR / f"{kind}.json"
+    downloaded = False
     if not dest.exists() or (time.time() - dest.stat().st_mtime) > INDEX_MAX_AGE_SECONDS:
         try:
-            _download_json(HOMEBREW_BULK_API.format(kind=kind), dest)
+            downloaded = _download_json(HOMEBREW_BULK_API.format(kind=kind), dest)
         except Exception as e:  # 네트워크 문제 등 — 캐시가 있으면 그거라도 쓴다
             if not dest.exists():
                 print(f"Homebrew {kind} 인덱스를 못 받았음: {e}", file=sys.stderr)
                 return []
-    return json.loads(dest.read_text())
+    data = json.loads(dest.read_text())
+    if downloaded:
+        # 탭 자동완성용 이름 목록도 지금 같이 갱신 — 안 그러면 다음 첫 탭에서 이 큰
+        # JSON 파싱(기본 Python 3.9 기준 2초쯤)을 하느라 탭이 멈춘 것처럼 보임
+        try:
+            _completion_tokens()
+        except Exception:
+            pass
+    return data
 
 
 def _display_width(s: str) -> int:
@@ -1456,6 +1496,48 @@ def cmd_update() -> None:
         print(f"jige는 이미 최신 상태입니다 ({before}).")
     else:
         print(f"jige 갱신됨: {before} -> {after}")
+    _hint_completion_setup()
+
+
+def _hint_completion_setup() -> None:
+    """탭 자동완성이 생기기 전에 설치한 사람은 셸 설정에 source 줄이 없음 —
+    update는 git pull만 하고 남의 설정 파일은 안 건드리니, 없을 때 안내만 함."""
+    shell = Path(os.environ.get("SHELL", "")).name
+    home = Path.home()
+    if shell == "zsh":
+        rcs = [Path(os.environ.get("ZDOTDIR", home)) / ".zshrc"]
+    elif shell == "bash":
+        rcs = [home / n for n in (".bash_profile", ".bash_login", ".profile", ".bashrc")]
+    else:
+        return
+    for rc in rcs:
+        try:
+            if "jige/completions/jige." in rc.read_text(errors="replace"):
+                return
+        except OSError:
+            continue
+    # 이 컴의 절대경로(/Users/<이름>/...)를 박지 말고 $HOME으로 — install.sh가 넣는 줄과
+    # 같은 모양이 되고, dotfiles를 다른 Mac에 동기화해도 그대로 동작함
+    script = str(COMPLETION_DIR / f"jige.{shell}")
+    home_str = str(home)
+    if script.startswith(home_str + os.sep):
+        script = "$HOME" + script[len(home_str):]
+    guard = ""
+    if shell == "zsh":
+        target = rcs[0]
+    elif sys.platform == "darwin":
+        # install.sh와 같은 규칙: 로그인 bash는 셋 중 처음 있는 파일 하나만 읽음
+        target = next((p for p in rcs[:3] if p.exists()), home / ".bash_profile")
+        guard = '[ -n \"$BASH_VERSION\" ] && '
+    else:
+        target = home / ".bashrc"
+    print()
+    print("팁: 탭 자동완성을 켜려면 아래 한 줄을 실행하세요 (새 터미널 창부터 적용):")
+    target_str = str(target)
+    if target_str.startswith(home_str + os.sep):
+        target_str = "~" + target_str[len(home_str):]
+    # 작은따옴표 안이라 $HOME은 rc 파일에 글자 그대로 들어가고, 셸이 뜰 때마다 그 컴 기준으로 풀림
+    print(f"  echo '{guard}[ -f \"{script}\" ] && source \"{script}\"' >> {target_str}")
 
 
 def cmd_upgrade(token: str | None, latest: bool = False) -> None:
@@ -1475,7 +1557,95 @@ def cmd_upgrade(token: str | None, latest: bool = False) -> None:
         print()
 
 
+# ---------------------------------------------------------------------------
+# 탭 자동완성: completions/jige.{zsh,bash}가 `jige __complete <종류> [접두어]`를
+# 불러서 후보를 받아감. 탭 누를 때마다 실행되니 네트워크는 절대 안 타고, 19M+32M짜리
+# 인덱스 JSON을 매번 파싱하지 않도록 이름만 뽑은 tokens.txt를 따로 캐시해 둠.
+# ---------------------------------------------------------------------------
+
+COMPLETION_DIR = REPO_ROOT / "completions"
+TOKENS_CACHE = INDEX_CACHE_DIR / "tokens.txt"
+
+# (이름, 도움말 키) — 별칭도 같이 넣어둬야 brew/port 습관대로 쳐도 완성됨
+COMPLETION_COMMANDS = [
+    ("install", "help_install"), ("search", "help_search"), ("info", "help_info"),
+    ("uninstall", "help_uninstall"), ("remove", "help_uninstall"),
+    ("list", "help_list"), ("installed", "help_list"),
+    ("upgrade", "help_upgrade"), ("update", "help_update"),
+    ("config", "help_config"), ("completion", "help_completion"),
+]
+
+
+def _completion_tokens() -> list[str]:
+    """Homebrew cask+formula 이름 + 로컬 레시피 이름을 tokens.txt에 캐시해서 반환.
+
+    셸 스크립트는 평소엔 tokens.txt를 직접 읽고(pyenv shim 등으로 python 기동만
+    0.5초 넘게 걸리는 기기가 있어서 탭마다 python을 띄우면 답답함), 인덱스 JSON이
+    tokens.txt보다 새로울 때(=jige search가 방금 새로 받아옴)만 이걸 불러 다시 뽑음.
+    인덱스가 아예 없으면(아직 search를 한 번도 안 함) 로컬 레시피만 — 탭 한 번에
+    50MB 다운로드는 안 함."""
+    sources = [INDEX_CACHE_DIR / "cask.json", INDEX_CACHE_DIR / "formula.json"]
+    newest = max((p.stat().st_mtime for p in sources if p.exists()), default=0)
+    if LOCAL_RECIPES_DIR.exists():
+        newest = max(newest, LOCAL_RECIPES_DIR.stat().st_mtime)
+    if TOKENS_CACHE.exists() and TOKENS_CACHE.stat().st_mtime >= newest:
+        return TOKENS_CACHE.read_text().split()
+
+    names: set[str] = set()
+    for path in sources:
+        if not path.exists():
+            continue
+        try:
+            for entry in json.loads(path.read_text()):
+                name = entry.get("token") or entry.get("name")
+                if name:
+                    names.add(name)
+        except (json.JSONDecodeError, OSError):
+            continue
+    if LOCAL_RECIPES_DIR.exists():
+        names.update(p.stem for p in LOCAL_RECIPES_DIR.glob("*.json"))
+    try:
+        INDEX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        TOKENS_CACHE.write_text("\n".join(sorted(names)) + "\n")
+    except OSError:
+        pass
+    return sorted(names)
+
+
+def cmd_complete(kind: str, prefix: str = "") -> None:
+    """숨은 명령 — 셸 완성 스크립트 전용. 후보를 한 줄에 하나씩 출력."""
+    if kind == "commands":
+        # zsh _describe 형식(이름:설명). 설명 안의 ':'는 구분자로 오인되니 이스케이프
+        for name, key in COMPLETION_COMMANDS:
+            print(f"{name}:{t(key).replace(':', chr(92) + ':')}")
+        return
+    if kind == "tokens":
+        candidates = _completion_tokens()
+    elif kind == "installed":
+        candidates = sorted(load_state())
+    else:
+        return
+    low = prefix.lower()
+    out = [c for c in candidates if c.lower().startswith(low)]
+    try:
+        sys.stdout.write("\n".join(out) + ("\n" if out else ""))
+    except BrokenPipeError:
+        pass
+
+
+def cmd_completion(shell: str) -> None:
+    path = COMPLETION_DIR / f"jige.{shell}"
+    if not path.exists():
+        sys.exit(f"지원하지 않는 셸: {shell} (zsh 또는 bash)")
+    sys.stdout.write(path.read_text())
+
+
 def main() -> None:
+    # 탭 누를 때마다 불리는 경로라 argparse/도움말 문자열 생성까지 건너뛰고 바로 처리
+    if len(sys.argv) >= 3 and sys.argv[1] == "__complete":
+        cmd_complete(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "")
+        return
+
     # 명령어 이름은 brew/port 둘 다 쓰는 것과 그대로 맞춤
     # (install/search/info/upgrade 공통, uninstall엔 brew의 remove, list엔 port의 installed를 별칭으로 추가)
     parser = argparse.ArgumentParser(prog="jige", description=t("app_description"))
@@ -1540,7 +1710,13 @@ def main() -> None:
     p_config.add_argument("key", nargs="?", default=None)
     p_config.add_argument("value", nargs="?", default=None)
 
+    p_completion = sub.add_parser("completion", help=t("help_completion"))
+    p_completion.add_argument("shell", choices=["zsh", "bash"])
+
     args = parser.parse_args()
+    if args.command == "completion":
+        cmd_completion(args.shell)
+        return
     if args.command == "install":
         cmd_install(args.token, mas=args.mas, latest=args.latest, find_legacy=args.find_legacy)
     elif args.command == "search":
