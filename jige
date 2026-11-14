@@ -41,7 +41,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 # formulae.brew.sh가 Python urllib의 기본 User-Agent("Python-urllib/3.x")를 유독
 # "Maximum threads for service reached" 503으로 많이 막는 걸 실측으로 확인함(curl이나
