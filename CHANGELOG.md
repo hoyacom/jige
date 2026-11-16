@@ -1,5 +1,21 @@
 # 변경 기록
 
+## 0.5.0 (2026-11-17)
+
+새 기능
+- **사용자 레포지토리** — 집 NAS·회사 서버 등 사용자가 직접 등록하는 저장소.
+  `jige user-repo add/remove/list`로 관리, `jige user-repo scan`으로 "버전 폴더 안에
+  아키텍처별 파일" 구조를 자동으로 훑어 카탈로그 생성, `jige user-repo add-file`로 파일
+  하나씩 등록. local path / http(s) / ssh 지원(SMB·WebDAV는 Finder로 이미 마운트된
+  local path로 사용). 인증은 jige가 저장하지 않고 `~/.netrc`(Basic)나 등록 시 지정한
+  환경변수(Bearer)를 그때그때 읽음. 각 파일에 platform/arch/min_os를 적어두면(생략 시
+  전부 지원으로 간주) 설치할 때 이 머신에 맞는 걸 자동으로 고름
+- `--brew`/`--port`를 하나의 `--repo <이름>`으로 통합 — brew/port뿐 아니라 등록한 사용자
+  레포 이름도 지정 가능. 사용자 레포지토리끼리 토큰이 겹치면 등록 순서로 조용히 해결하지만,
+  brew/port ↔ 사용자 레포처럼 서로 다른 생태계가 겹치면 여전히 자동 선택 안 하고 물어봄
+  (버전+설명을 같이 보여줌)
+- 설치 상태(`installed.json`)에 어느 소스로 설치했는지(`source`) 기록
+
 ## 0.4.0 (2026-11-16)
 
 새 기능

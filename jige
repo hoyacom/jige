@@ -41,7 +41,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 # formulae.brew.sh가 Python urllib의 기본 User-Agent("Python-urllib/3.x")를 유독
 # "Maximum threads for service reached" 503으로 많이 막는 걸 실측으로 확인함(curl이나
@@ -775,7 +775,7 @@ def cmd_search(query: str, limit_per_source: int = 8, mas: bool = False) -> None
     allow_mas = mas_enabled() or mas
     all_hits = (
         search_local_recipes(query) + search_macports(query)
-        + search_mas(query, allow_mas) + search_homebrew(query)
+        + search_mas(query, allow_mas) + search_homebrew(query) + search_user_repos(query)
     )
     if not all_hits:
         print(t("no_results", q=query))
@@ -892,22 +892,163 @@ def fetch_mas_recipe(token: str, allow_mas: bool) -> dict | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# 사용자 레포지토리: 사용자가 직접 등록하는 외부/자체 저장소(집 NAS, 회사 서버 등).
+# jige 공식 레포지토리(recipes/)와 완전히 분리 — 저장소 루트의 jige-catalog.json
+# 하나로 어떤 토큰/버전/파일이 있는지 알아냄. 인증은 jige가 저장/관리하지 않음:
+# curl -n으로 ~/.netrc를 그대로 쓰고(Basic), Bearer 토큰은 등록할 때 적어둔
+# "환경변수 이름"으로 그때그때 읽음 — jige 자신의 설정 파일엔 비밀값이 전혀 안 남음.
+# ---------------------------------------------------------------------------
+
+USER_REPO_CATALOG_NAME = "jige-catalog.json"
+
+
+def load_user_repos() -> list[dict]:
+    return load_config().get("user_repos", [])
+
+
+def save_user_repos(repos: list[dict]) -> None:
+    config = load_config()
+    config["user_repos"] = repos
+    save_config(config)
+
+
+def _parse_repo_url(url: str) -> tuple[str, str]:
+    """(프로토콜, 나머지) 반환. file://, http(s)://, ssh:// 지원. 스킴이 없으면 로컬 경로로
+    취급(SMB/WebDAV를 Finder로 이미 마운트해서 /Volumes/... 로 쓰는 경우가 이쪽)."""
+    m = re.match(r"^([a-z]+)://(.*)$", url)
+    if not m:
+        return "file", url
+    scheme, rest = m.group(1), m.group(2)
+    if scheme not in ("file", "http", "https", "ssh"):
+        sys.exit(f"지원 안 하는 프로토콜: {scheme}:// (가능: file, http, https, ssh — 또는 스킴 없이 로컬 경로)")
+    return scheme, rest
+
+
+def _repo_curl(url: str, repo: dict, dest: Path | None) -> bytes | None:
+    cmd = ["curl", "-fsSL", "-n"]  # -n: ~/.netrc 있으면 자동 사용(Basic Auth), 없어도 무해
+    if repo.get("bearer_env"):
+        token = os.environ.get(repo["bearer_env"])
+        if not token:
+            sys.exit(f"환경변수 {repo['bearer_env']}가 비어있음 (사용자 레포 '{repo['name']}' 인증용)")
+        cmd += ["--oauth2-bearer", token]
+    if dest:
+        subprocess.run(cmd + ["-o", str(dest), url], check=True)
+        return None
+    return subprocess.run(cmd + [url], check=True, capture_output=True).stdout
+
+
+def _repo_ssh_target(repo: dict) -> tuple[str, str]:
+    """ssh://user@host/path -> (user@host, /path) — ssh/scp 명령에 바로 쓸 수 있는 형태."""
+    _, rest = _parse_repo_url(repo["url"])
+    host, _, path = rest.partition("/")
+    return host, "/" + path
+
+
+def repo_read_text(repo: dict, relpath: str) -> str:
+    scheme, rest = _parse_repo_url(repo["url"])
+    if scheme == "file":
+        return (Path(rest).expanduser() / relpath).read_text()
+    if scheme in ("http", "https"):
+        return _repo_curl(f"{repo['url'].rstrip('/')}/{relpath}", repo, None).decode("utf-8")
+    host, path = _repo_ssh_target(repo)
+    out = subprocess.run(["ssh", host, "cat", f"{path.rstrip('/')}/{relpath}"],
+                          check=True, capture_output=True, text=True)
+    return out.stdout
+
+
+def repo_fetch_file(repo: dict, relpath: str, dest: Path) -> None:
+    scheme, rest = _parse_repo_url(repo["url"])
+    if scheme == "file":
+        shutil.copyfile(Path(rest).expanduser() / relpath, dest)
+    elif scheme in ("http", "https"):
+        _repo_curl(f"{repo['url'].rstrip('/')}/{relpath}", repo, dest)
+    else:
+        host, path = _repo_ssh_target(repo)
+        subprocess.run(["scp", "-q", f"{host}:{path.rstrip('/')}/{relpath}", str(dest)], check=True)
+
+
+def fetch_user_repo_catalog(repo: dict) -> dict | None:
+    """실패(연결 안 됨 등)하면 None — search_macports처럼 조용히 건너뜀(경고만 출력)."""
+    try:
+        return json.loads(repo_read_text(repo, USER_REPO_CATALOG_NAME))
+    except Exception as e:
+        print(f"사용자 레포 '{repo['name']}' 연결 실패(건너뜀): {e}", file=sys.stderr)
+        return None
+
+
+def _version_sort_key(v: str) -> tuple:
+    """'3.10'이 '3.9'보다 작게 비교되는 문자열정렬 버그(macos_in_range에서 겪었던
+    자릿수 패딩 버그와 같은 종류)를 피하려고 점/하이픈으로 쪼개서 숫자는 숫자로 비교."""
+    parts = re.split(r"[.\-]", v)
+    return tuple((0, int(p)) if p.isdigit() else (1, p) for p in parts)
+
+
+def resolve_user_repo_file(entry: dict, cpu: str) -> dict | None:
+    """카탈로그 entry의 versions.*.files[]에서 이 머신(아키텍처/플랫폼/macOS 버전)에 맞는
+    것 중 가장 최신 버전을 고름. platform/arch/min_os는 전부 생략 가능 — 생략한 항목은
+    이 머신에서 지원하는 것으로 간주(아는 것만 적으면 됨). 맞는 파일이 하나도 없으면 None
+    (예: 카탈로그에 윈도우 빌드만 있는데 이 머신은 Mac인 경우)."""
+    candidates = []
+    for version, vdata in (entry.get("versions") or {}).items():
+        for f in vdata.get("files", []):
+            if f.get("platform") and f["platform"] != "macos":
+                continue
+            if f.get("arch") and f["arch"] != cpu:
+                continue
+            if f.get("min_os") and not meets_min_macos(f["min_os"]):
+                continue
+            candidates.append((version, f))
+    if not candidates:
+        return None
+    version, f = max(candidates, key=lambda vf: _version_sort_key(vf[0]))
+    return {"version": version, "file": f}
+
+
+def search_user_repos(query: str) -> list[dict]:
+    hits = []
+    cpu = arch()
+    for repo in load_user_repos():
+        catalog = fetch_user_repo_catalog(repo)
+        if not catalog:
+            continue
+        for token, entry in catalog.items():
+            name = entry.get("name", token)
+            name = name[0] if isinstance(name, list) else name
+            desc = entry.get("desc", "")
+            rank = _rank(query, token, name, desc)
+            if rank >= 999:
+                continue
+            resolved = resolve_user_repo_file(entry, cpu)
+            hits.append({
+                "name": token,
+                "version": resolved["version"] if resolved else "?",
+                "desc": desc,
+                "source": f"user:{repo['name']}",
+                "kind": entry.get("kind", "unknown"),
+                "rank": rank,
+            })
+    return hits
+
+
 def find_exact_token_hits(token: str) -> dict[str, dict]:
-    """토큰과 정확히 이름이 같은 항목을 Homebrew cask/formula, MacPorts에서 찾음.
-    search의 _rank()는 느슨한 부분일치지만 여긴 완전 일치만 봄 — install/info에서
-    토큰이 여러 소스에 걸쳐 서로 다른 소프트웨어일 수 있을 때(예: mole = brew formula는
-    Mac 클리너, MacPorts port는 ssh 터널 도구) 자동으로 아무거나 고르지 않기 위한 용도."""
+    """토큰과 정확히 이름이 같은 항목을 Homebrew cask/formula, MacPorts, 등록된 사용자
+    레포지토리에서 찾음. search의 _rank()는 느슨한 부분일치지만 여긴 완전 일치만 봄 —
+    install/info에서 토큰이 여러 곳에 걸쳐 서로 다른 소프트웨어일 수 있을 때(예: mole =
+    brew formula는 Mac 클리너, MacPorts port는 ssh 터널 도구) 자동으로 아무거나 고르지
+    않기 위한 용도. 값은 전부 {"entry": ...} 형태로 통일함(사용자 레포 쪽은 version/
+    file/repo도 같이 들어있음)."""
     tl = token.lower()
     hits: dict[str, dict] = {}
 
     for entry in load_homebrew_index("cask"):
         if entry.get("token", "").lower() == tl:
-            hits["cask"] = entry
+            hits["cask"] = {"entry": entry}
             break
 
     for entry in load_homebrew_index("formula"):
         if entry.get("name", "").lower() == tl:
-            hits["formula"] = entry
+            hits["formula"] = {"entry": entry}
             break
 
     if current_os() == "macos":
@@ -918,10 +1059,21 @@ def find_exact_token_hits(token: str) -> dict[str, dict]:
                 data = json.load(r)
             for entry in data.get("results", []):
                 if entry.get("name", "").lower() == tl:
-                    hits["port"] = entry
+                    hits["port"] = {"entry": entry}
                     break
         except Exception:
             pass  # MacPorts 조회 실패는 무시 — brew 쪽 결과만으로도 판단 가능
+
+    cpu = arch()
+    for repo in load_user_repos():
+        catalog = fetch_user_repo_catalog(repo)
+        if not catalog or token not in catalog:
+            continue
+        entry = catalog[token]
+        resolved = resolve_user_repo_file(entry, cpu)
+        if not resolved:
+            continue  # 이 머신에 맞는 파일이 없음 — 못 찾은 것과 같게 취급
+        hits[f"user_repo:{repo['name']}"] = {"entry": entry, "repo": repo, **resolved}
 
     return hits
 
@@ -929,35 +1081,61 @@ def find_exact_token_hits(token: str) -> dict[str, dict]:
 SOURCE_KIND_LABEL = {"cask": "brew (jim, GUI)", "formula": "brew (dogu, CLI)", "port": "port (MacPorts)"}
 
 
-def disambiguate_source(token: str, brew: bool = False, port: bool = False) -> dict:
-    """토큰이 brew(cask/formula)와 MacPorts에 동시에 정확히 일치하면 --brew/--port 없인
-    진행하지 않음 — 서로 다른 프로그램일 위험(mole 사례)이 있어서 자동 선택 금지.
-    반환: {"kind": "cask"|"formula"|"port", "entry": {...}} 또는, 어디에도 정확히 일치하는
-    게 없으면 빈 dict(로컬 recipes/MAS 등 기존 경로로 계속 찾게 둠 — 이 경우는 안전함).
-    brew/port 동시 지정은 argparse의 mutually_exclusive_group이 이미 막음."""
+def _hit_label(kind: str) -> str:
+    return f"user-repo:{kind.split(':', 1)[1]}" if kind.startswith("user_repo:") else SOURCE_KIND_LABEL[kind]
+
+
+def _hit_version(kind: str, hit: dict) -> str:
+    if kind.startswith("user_repo:"):
+        return hit["version"]
+    entry = hit["entry"]
+    return (entry.get("versions") or {}).get("stable", "?") if kind == "formula" else entry.get("version", "?")
+
+
+def disambiguate_source(token: str, repo: str | None = None) -> dict:
+    """토큰이 brew(cask/formula)/MacPorts/사용자 레포지토리에 동시에 정확히 일치하면
+    --repo 없인 진행하지 않음 — 서로 다른 프로그램일 위험(mole 사례)이 있어서 자동
+    선택 금지. 단, 사용자 레포지토리끼리만 겹치는 건 등록 순서(user_repo_order)로
+    조용히 해결함 — 그건 사용자가 자기가 등록한 레포들 사이의 일이라 본인 책임 범위.
+    brew/port ↔ 사용자 레포처럼 jige가 통제 못 하는 서로 다른 생태계끼리 겹치는 건
+    순서와 무관하게 여전히 막음.
+    반환: {"kind": ..., "entry": {...}, [user_repo면 "version"/"file"/"repo"도]}
+    또는 어디에도 정확히 일치하는 게 없으면 빈 dict(로컬 recipes/MAS 등 기존 경로로
+    계속 찾게 둠 — 이 경우는 안전함)."""
     hits = find_exact_token_hits(token)
     if not hits:
         return {}
 
-    if brew:
-        hits.pop("port", None)
-    elif port:
-        hits.pop("cask", None)
-        hits.pop("formula", None)
+    if repo == "brew":
+        hits = {k: v for k, v in hits.items() if k in ("cask", "formula")}
+    elif repo:
+        key = repo if repo == "port" else f"user_repo:{repo}"
+        hits = {k: v for k, v in hits.items() if k == key}
 
-    if brew or port:
-        if not hits:
-            sys.exit(f"'{token}'는 {'Homebrew' if brew else 'MacPorts'}에 정확히 일치하는 게 없습니다.")
+    if repo and not hits:
+        sys.exit(f"'{token}'는 '{repo}'에 정확히 일치하는 게 없습니다.")
+
+    if not repo:
+        non_user = {k: v for k, v in hits.items() if not k.startswith("user_repo:")}
+        user_hits = {k: v for k, v in hits.items() if k.startswith("user_repo:")}
+        if not non_user and len(user_hits) > 1:
+            order = load_config().get("user_repo_order", [])
+            best = min(user_hits, key=lambda k: (order.index(k.split(":", 1)[1])
+                                                  if k.split(":", 1)[1] in order else len(order)))
+            hits = {best: user_hits[best]}
 
     if len(hits) > 1:
-        print(f"'{token}'와 정확히 이름이 같은 게 여러 소스에 있습니다 — 서로 다른 프로그램일 수 있어서 자동으로 고르지 않습니다:")
-        for kind, entry in hits.items():
-            desc = entry.get("desc") or entry.get("description") or ""
-            print(f"  [{SOURCE_KIND_LABEL[kind]}] {desc}")
-        sys.exit(f"-> --brew 또는 --port로 어느 쪽인지 지정하세요 (예: jige install {token} --port)")
+        print(f"'{token}'와 정확히 이름이 같은 게 여러 레포에 있습니다 — 서로 다른 프로그램일 수 있어서 자동으로 고르지 않습니다:")
+        for kind, hit in hits.items():
+            desc = hit["entry"].get("desc") or hit["entry"].get("description") or ""
+            print(f"  [{_hit_label(kind)}] v{_hit_version(kind, hit)} — {desc}")
+        first_kind = next(iter(hits))
+        example = (first_kind.split(":", 1)[1] if first_kind.startswith("user_repo:")
+                   else "port" if first_kind == "port" else "brew")
+        sys.exit(f"-> --repo <이름>으로 어느 쪽인지 지정하세요 (예: jige install {token} --repo {example})")
 
-    kind, entry = next(iter(hits.items()))
-    return {"kind": kind, "entry": entry}
+    kind, hit = next(iter(hits.items()))
+    return {"kind": kind, **hit}
 
 
 def fetch_recipe(token: str, allow_mas: bool = False) -> tuple[dict, str]:
@@ -1524,6 +1702,138 @@ def cmd_config(key: str | None, value: str | None) -> None:
     sys.exit(f"알 수 없는 설정: {key} (지금은 'mas'만 있음)")
 
 
+def cmd_user_repo_add(name: str, url: str, bearer_env: str | None) -> None:
+    repos = load_user_repos()
+    if any(r["name"] == name for r in repos):
+        sys.exit(f"이미 등록된 이름: {name} (지우려면 'jige user-repo remove {name}')")
+    _parse_repo_url(url)  # 스킴 검증만 먼저 해둠 — 등록 시점에 바로 알려주려고
+    repos.append({"name": name, "url": url, "bearer_env": bearer_env})
+    save_user_repos(repos)
+
+    config = load_config()
+    order = config.get("user_repo_order", [])
+    order.append(name)
+    config["user_repo_order"] = order
+    save_config(config)
+    print(f"등록됨: {name} -> {url}" + (f" (Bearer 토큰: ${bearer_env})" if bearer_env else ""))
+
+
+def cmd_user_repo_remove(name: str) -> None:
+    repos = load_user_repos()
+    if not any(r["name"] == name for r in repos):
+        sys.exit(f"등록 안 된 이름: {name}")
+    save_user_repos([r for r in repos if r["name"] != name])
+
+    config = load_config()
+    config["user_repo_order"] = [n for n in config.get("user_repo_order", []) if n != name]
+    save_config(config)
+    print(f"제거됨: {name}")
+
+
+def cmd_user_repo_list() -> None:
+    repos = load_user_repos()
+    if not repos:
+        print("등록된 사용자 레포지토리 없음. 'jige user-repo add <이름> <url>'로 등록하세요.")
+        return
+    order = load_config().get("user_repo_order", [])
+    repos.sort(key=lambda r: order.index(r["name"]) if r["name"] in order else len(order))
+    print(f"{'우선순위':<8}{'이름':<16}{'URL':<40}  인증")
+    for i, r in enumerate(repos, 1):
+        auth = f"Bearer(${r['bearer_env']})" if r.get("bearer_env") else "Basic(.netrc, 있으면)"
+        print(f"{i:<8}{r['name']:<16}{r['url']:<40}  {auth}")
+
+
+def _guess_file_platform_arch(filename: str) -> tuple[str | None, str | None]:
+    """파일명에서 플랫폼/아키텍처를 최선 노력으로 추측 — scan이 자동으로 채워주되,
+    확신 없으면 None으로 둬서 '전부 지원' 기본값이 적용되게 함. 틀릴 수 있으니
+    생성된 jige-catalog.json을 확인/수정하는 걸 권장."""
+    low = filename.lower()
+    platform = None
+    if any(s in low for s in (".dmg", ".pkg", "mac", "darwin", "osx")):
+        platform = "macos"
+    elif any(s in low for s in (".exe", ".msi", "win")):
+        platform = "windows"
+    elif any(s in low for s in (".deb", ".rpm", ".appimage", "linux")):
+        platform = "linux"
+
+    file_arch = None
+    if any(s in low for s in ("arm64", "aarch64")):
+        file_arch = "arm64"
+    elif any(s in low for s in ("x86_64", "amd64", "x64")):
+        file_arch = "x86_64"
+
+    return platform, file_arch
+
+
+def cmd_user_repo_scan(repo_path: str, token: str, app_name: str | None, kind: str) -> None:
+    """<repo_path>/<버전 폴더>/ 안의 파일들을 훑어서 jige-catalog.json에 등록. 폴더명이
+    버전이고, 그 안의 파일 하나하나가 이 레포지토리가 내보내는 아티팩트라고 가정 — 파일
+    명으로 platform/arch를 추측해서 채워두지만(최선 노력, 틀릴 수 있음) 못 알아내면
+    생략해서 jige는 그걸 '전부 지원'으로 취급함. 로컬 경로에만 씀(원격 쓰기는 미지원)."""
+    base = Path(repo_path).expanduser()
+    if not base.is_dir():
+        sys.exit(f"디렉터리 없음: {base}")
+    catalog_path = base / USER_REPO_CATALOG_NAME
+    catalog = json.loads(catalog_path.read_text()) if catalog_path.exists() else {}
+    entry = catalog.setdefault(token, {
+        "kind": kind, "desc": "", "artifacts": [{"app": [app_name or f"{token}.app"]}],
+    })
+    versions: dict = entry.setdefault("versions", {})
+
+    for version_dir in sorted(p for p in base.iterdir() if p.is_dir()):
+        version = version_dir.name
+        files = []
+        for f in sorted(version_dir.iterdir()):
+            if not f.is_file():
+                continue
+            platform, file_arch = _guess_file_platform_arch(f.name)
+            file_info = {"path": f"{version}/{f.name}", "sha256": sha256_of(f)}
+            if platform:
+                file_info["platform"] = platform
+            if file_arch:
+                file_info["arch"] = file_arch
+            files.append(file_info)
+        if files:
+            versions[version] = {"files": files}
+
+    catalog_path.write_text(json.dumps(catalog, ensure_ascii=False, indent=2))
+    print(f"{catalog_path} 갱신 — '{token}' 버전 {len(versions)}개 등록")
+    print("(platform/arch는 파일명으로 추측한 것 — 틀렸으면 catalog.json을 직접 고치세요)")
+
+
+def cmd_user_repo_add_file(
+    repo_path: str, file_path: str, token: str, version: str,
+    platform: str | None, file_arch: str | None, min_os: str | None,
+) -> None:
+    """파일 하나를 로컬 레포지토리로 복사하고 jige-catalog.json에 등록. 로컬 경로에만 씀."""
+    base = Path(repo_path).expanduser()
+    src = Path(file_path).expanduser()
+    if not src.is_file():
+        sys.exit(f"파일 없음: {src}")
+    dest_rel = f"{version}/{src.name}"
+    dest = base / dest_rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dest)
+
+    catalog_path = base / USER_REPO_CATALOG_NAME
+    catalog = json.loads(catalog_path.read_text()) if catalog_path.exists() else {}
+    entry = catalog.setdefault(token, {"kind": "unknown", "desc": "", "artifacts": []})
+    files = entry.setdefault("versions", {}).setdefault(version, {"files": []})["files"]
+    file_info = {"path": dest_rel, "sha256": sha256_of(dest)}
+    if platform:
+        file_info["platform"] = platform
+    if file_arch:
+        file_info["arch"] = file_arch
+    if min_os:
+        file_info["min_os"] = min_os
+    files.append(file_info)
+
+    catalog_path.write_text(json.dumps(catalog, ensure_ascii=False, indent=2))
+    print(f"{catalog_path}에 등록: '{token}' v{version} -> {dest_rel}")
+    if entry["artifacts"] == []:
+        print(f"(artifacts가 비어있음 — {catalog_path}를 열어서 \"artifacts\": [{{\"app\": [\"...\"]}}] 처럼 직접 채워야 설치됨)")
+
+
 def install_via_mas(token: str, recipe: dict) -> None:
     """mas install <id>를 그대로 호출. 실제 다운로드·인증은 로그인된 App Store 세션이 처리."""
     mas_id = recipe["_mas_id"]
@@ -1541,6 +1851,7 @@ def install_via_mas(token: str, recipe: dict) -> None:
     state[token] = {
         "mas_id": mas_id,
         "version": recipe.get("version"),
+        "source": "mas",
         "installed_at": datetime.datetime.now().isoformat(timespec="seconds"),
     }
     save_state(state)
@@ -1596,21 +1907,92 @@ def resolve_version_for_this_mac(
     return legacy_recipe, legacy
 
 
+def _install_from_user_repo(token: str, chosen: dict) -> None:
+    """사용자 레포지토리에서 받아서 설치. 공식 경로(fetch_recipe -> pick_url_sha -> download)
+    대신 repo_fetch_file로 받지만, 그 뒤(포장 풀기 -> 아티팩트 설치)는 똑같은 파이프라인을
+    그대로 씀 — stage_download/install_artifacts는 recipe의 artifacts/version만 보고
+    url/sha256을 직접 참조하지 않아서 그대로 재사용 가능함."""
+    repo = chosen["repo"]
+    entry = chosen["entry"]
+    version = chosen["version"]
+    file_info = chosen["file"]
+    name = entry.get("name", token)
+    print(f"레시피: {name} (사용자 레포 '{repo['name']}', 등록 버전 {version})")
+
+    recipe = {"version": version, "artifacts": entry.get("artifacts", [])}
+    todo, skipped = plan_artifacts(recipe)
+    if not todo:
+        sys.exit(f"{token}: jige가 아직 지원하지 않는 설치 방식입니다 — {', '.join(skipped) or '설치 항목 없음'}")
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    relpath = file_info["path"]
+    filename = re.sub(r"[^A-Za-z0-9._-]", "_", Path(relpath).name)
+    download_path = CACHE_DIR / f"{token}-{version}-{filename}"
+    print(f"가져오는 중: 사용자 레포 '{repo['name']}' / {relpath}")
+    repo_fetch_file(repo, relpath, download_path)
+
+    actual_sha = sha256_of(download_path)
+    expected_sha = file_info.get("sha256")
+    if expected_sha and actual_sha != expected_sha:
+        download_path.unlink()
+        sys.exit(f"sha256 불일치! 기대값={expected_sha} 실제값={actual_sha} — 받은 파일 삭제, 설치 중단.")
+    print("sha256 체크섬 일치 확인됨." if expected_sha else f"(카탈로그에 체크섬이 없어서 대조는 못 함 — 받은 파일의 sha256: {actual_sha})")
+
+    first_app_target = next((_expand_cask_path(a.get("target") or f"/Applications/{Path(v[0]).name}",
+                                                token, version, Path("/"))
+                             for k, v, a in todo if k == "app"), None)
+    before = installed_version(first_app_target) if first_app_target else None
+
+    try:
+        with tempfile.TemporaryDirectory(prefix=f"jige-{token}-") as tmp:
+            staged = Path(tmp) / "staged"
+            stage_download(download_path, relpath, recipe, staged)
+            result = install_artifacts(token, recipe, staged)
+    except UnsupportedInstall as e:
+        sys.exit(f"{token}: 설치 못 함 — {e}")
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"{token}: 압축 풀기/복사 중 실패 — {' '.join(map(str, e.cmd))[:200]} (종료 코드 {e.returncode})")
+
+    if result["apps"]:
+        installed_path = Path(result["apps"][0])
+        after = installed_version(installed_path) or version
+        app_label = installed_path.name
+    else:
+        after = version
+        app_label = name[0] if isinstance(name, list) else name
+
+    state = load_state()
+    state[token] = {
+        "app": app_label,
+        "version": after,
+        "source": f"user_repo:{repo['name']}",
+        "installed_at": datetime.datetime.now().isoformat(timespec="seconds"),
+    }
+    if result["apps"]:
+        state[token]["apps"] = result["apps"]
+    if result["pkg"]:
+        state[token]["pkg"] = True
+    save_state(state)
+
+    print()
+    print(f"완료: {app_label}  {before or '(미설치)'} -> {after}")
+
+
 def cmd_install(
     token: str, mas: bool = False, latest: bool = False, find_legacy: bool = False,
-    brew: bool = False, port: bool = False,
+    repo: str | None = None,
 ) -> None:
     codename = sw_vers_codename()
     cpu = arch()
     print(f"macOS 코드네임: {codename} / 아키텍처: {cpu}")
 
     cask_rb_match = CASK_RB_RAW_URL_RE.match(token)
-    if not cask_rb_match:
-        chosen = disambiguate_source(token, brew=brew, port=port)
-        if chosen.get("kind") == "formula":
-            sys.exit(f"{token}: Homebrew formula(dogu) 설치는 jige에 아직 없습니다 — 'brew install {token}'로 직접 설치하세요.")
-        if chosen.get("kind") == "port":
-            sys.exit(f"{token}: MacPorts 설치는 jige에 아직 없습니다 — 'sudo port install {token}'로 직접 설치하세요.")
+    chosen = {} if cask_rb_match else disambiguate_source(token, repo=repo)
+    if chosen.get("kind") == "formula":
+        sys.exit(f"{token}: Homebrew formula(dogu) 설치는 jige에 아직 없습니다 — 'brew install {token}'로 직접 설치하세요.")
+    if chosen.get("kind") == "port":
+        sys.exit(f"{token}: MacPorts 설치는 jige에 아직 없습니다 — 'sudo port install {token}'로 직접 설치하세요.")
+
     legacy_used = None
     if cask_rb_match:
         # brew install --cask <raw url>와 똑같은 발상 — Homebrew-Cask의 특정 커밋(과거
@@ -1621,6 +2003,9 @@ def cmd_install(
         source = f"Homebrew-Cask 커밋 {cask_rb_match.group(1)[:10]} (brew 방식 직접 설치)"
         print(f"레시피: {recipe.get('name')} ({source}, 등록 버전 {recipe.get('version')})")
         token = real_token
+    elif chosen.get("kind", "").startswith("user_repo:"):
+        _install_from_user_repo(token, chosen)
+        return
     else:
         recipe, source = fetch_recipe(token, allow_mas=mas_enabled() or mas)
         print(f"레시피: {recipe.get('name')} ({source}, 등록 버전 {recipe.get('version')})")
@@ -1688,6 +2073,7 @@ def cmd_install(
     state[token] = {
         "app": app_label,
         "version": after,
+        "source": source,
         "installed_at": datetime.datetime.now().isoformat(timespec="seconds"),
     }
     if result["apps"]:
@@ -1711,8 +2097,24 @@ def cmd_install(
     print(f"완료: {app_label}  {before or '(미설치)'} -> {after}")
 
 
-def cmd_info(token: str, brew: bool = False, port: bool = False) -> None:
-    chosen = disambiguate_source(token, brew=brew, port=port)
+def cmd_info(token: str, repo: str | None = None) -> None:
+    chosen = disambiguate_source(token, repo=repo)
+    if chosen.get("kind", "").startswith("user_repo:"):
+        entry, version, file_info = chosen["entry"], chosen["version"], chosen["file"]
+        name = entry.get("name", token)
+        name = name[0] if isinstance(name, list) else name
+        print(f"이름       : {name}")
+        print(f"출처       : 사용자 레포 '{chosen['repo']['name']}'")
+        print(f"버전       : {version}")
+        if entry.get("homepage"):
+            print(f"홈페이지   : {entry['homepage']}")
+        if entry.get("desc"):
+            print(f"설명       : {entry['desc']}")
+        platform = file_info.get("platform", "제한 없음(전부 지원으로 간주)")
+        file_arch = file_info.get("arch", "제한 없음(전부 지원으로 간주)")
+        min_os = file_info.get("min_os", "제한 없음")
+        print(f"이 머신용 파일: {file_info['path']} (platform={platform}, arch={file_arch}, min_os={min_os})")
+        return
     if chosen.get("kind") == "formula":
         entry = chosen["entry"]
         print(f"이름       : {entry.get('name')}")
@@ -2198,12 +2600,9 @@ def main() -> None:
         "--find-legacy", action="store_true",
         help="저장소에 대체판이 없어도 Homebrew-Cask 커밋 기록에서 즉석으로 찾아봄 (시간 좀 걸림)"
     )
-    p_install_source = p_install.add_mutually_exclusive_group()
-    p_install_source.add_argument(
-        "--brew", action="store_true", help="토큰이 brew/port에 동시에 있을 때 brew 쪽으로 지정"
-    )
-    p_install_source.add_argument(
-        "--port", action="store_true", help="토큰이 brew/port에 동시에 있을 때 MacPorts 쪽으로 지정"
+    p_install.add_argument(
+        "--repo", default=None,
+        help="토큰이 여러 레포에 동시에 있을 때 어디서 가져올지 지정 (brew / port / 등록한 사용자 레포 이름)"
     )
 
     p_search = sub.add_parser(
@@ -2224,12 +2623,9 @@ def main() -> None:
 
     p_info = sub.add_parser("info", help=t("help_info"))
     p_info.add_argument("token")
-    p_info_source = p_info.add_mutually_exclusive_group()
-    p_info_source.add_argument(
-        "--brew", action="store_true", help="토큰이 brew/port에 동시에 있을 때 brew 쪽으로 지정"
-    )
-    p_info_source.add_argument(
-        "--port", action="store_true", help="토큰이 brew/port에 동시에 있을 때 MacPorts 쪽으로 지정"
+    p_info.add_argument(
+        "--repo", default=None,
+        help="토큰이 여러 레포에 동시에 있을 때 어디서 가져올지 지정 (brew / port / 등록한 사용자 레포 이름)"
     )
 
     p_uninstall = sub.add_parser(
@@ -2256,6 +2652,43 @@ def main() -> None:
     p_config.add_argument("key", nargs="?", default=None)
     p_config.add_argument("value", nargs="?", default=None)
 
+    p_user_repo = sub.add_parser(
+        "user-repo",
+        help="사용자 레포지토리(NAS/회사 서버 등) 등록·관리 — jige 공식 레포지토리와 별도"
+    )
+    ur_sub = p_user_repo.add_subparsers(dest="user_repo_action", required=True)
+
+    p_ur_add = ur_sub.add_parser("add", help="레포지토리 등록")
+    p_ur_add.add_argument("name")
+    p_ur_add.add_argument("url", help="file:///... , http(s)://... , ssh://user@host/path , 또는 스킴 없는 로컬 경로")
+    p_ur_add.add_argument(
+        "--bearer-env", default=None,
+        help="Bearer 토큰을 읽어올 환경변수 이름 (값 자체는 jige가 저장 안 함, Basic Auth는 ~/.netrc 자동 사용)"
+    )
+
+    p_ur_remove = ur_sub.add_parser("remove", aliases=["rm"], help="레포지토리 등록 해제")
+    p_ur_remove.add_argument("name")
+
+    ur_sub.add_parser("list", aliases=["ls"], help="등록된 레포지토리 목록 (우선순위 순)")
+
+    p_ur_scan = ur_sub.add_parser(
+        "scan",
+        help="로컬 경로의 '버전 폴더 안에 파일들' 구조를 훑어서 jige-catalog.json 자동 생성/갱신"
+    )
+    p_ur_scan.add_argument("path", help="레포지토리 루트 (이 밑에 버전 이름의 폴더들이 있다고 가정)")
+    p_ur_scan.add_argument("--token", required=True)
+    p_ur_scan.add_argument("--app", default=None, help=".app 번들 이름 (기본: <토큰>.app)")
+    p_ur_scan.add_argument("--kind", choices=["jim", "dogu", "unknown"], default="jim")
+
+    p_ur_addfile = ur_sub.add_parser("add-file", help="파일 하나를 레포지토리에 복사하고 카탈로그에 등록")
+    p_ur_addfile.add_argument("path", help="레포지토리 루트 (로컬 경로)")
+    p_ur_addfile.add_argument("file", help="등록할 파일")
+    p_ur_addfile.add_argument("--token", required=True)
+    p_ur_addfile.add_argument("--version", required=True)
+    p_ur_addfile.add_argument("--platform", choices=["macos", "windows", "linux"], default=None)
+    p_ur_addfile.add_argument("--arch", default=None, help="예: arm64, x86_64 (생략하면 전부 지원으로 간주)")
+    p_ur_addfile.add_argument("--min-os", default=None, help="예: 12 (생략하면 제한 없음)")
+
     p_completion = sub.add_parser("completion", help=t("help_completion"))
     p_completion.add_argument("shell", choices=["zsh", "bash"])
 
@@ -2266,14 +2699,14 @@ def main() -> None:
     if args.command == "install":
         cmd_install(
             args.token, mas=args.mas, latest=args.latest, find_legacy=args.find_legacy,
-            brew=args.brew, port=args.port,
+            repo=args.repo,
         )
     elif args.command == "search":
         cmd_search(" ".join(args.query), mas=args.mas)
     elif args.command == "config":
         cmd_config(args.key, args.value)
     elif args.command == "info":
-        cmd_info(args.token, brew=args.brew, port=args.port)
+        cmd_info(args.token, repo=args.repo)
     elif args.command in ("uninstall", "remove"):
         cmd_uninstall(args.token, zap=args.zap)
     elif args.command in ("list", "installed"):
@@ -2282,6 +2715,20 @@ def main() -> None:
         cmd_upgrade(args.token, latest=args.latest)
     elif args.command == "update":
         cmd_update()
+    elif args.command == "user-repo":
+        if args.user_repo_action == "add":
+            cmd_user_repo_add(args.name, args.url, args.bearer_env)
+        elif args.user_repo_action in ("remove", "rm"):
+            cmd_user_repo_remove(args.name)
+        elif args.user_repo_action in ("list", "ls"):
+            cmd_user_repo_list()
+        elif args.user_repo_action == "scan":
+            cmd_user_repo_scan(args.path, args.token, args.app, args.kind)
+        elif args.user_repo_action == "add-file":
+            cmd_user_repo_add_file(
+                args.path, args.file, args.token, args.version,
+                args.platform, args.arch, args.min_os,
+            )
 
 
 if __name__ == "__main__":
