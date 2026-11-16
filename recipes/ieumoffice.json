@@ -1,0 +1,40 @@
+{
+  "token": "ieumoffice",
+  "kind": "jim",
+  "name": ["IeumOffice", "이음오피스"],
+  "desc": "워드·엑셀·파워포인트·PDF·한글(HWP/HWPX)·마크다운·HTML·마인드맵을 한 창에서 여는 무료 오픈소스 오피스 (GenOffice 기반, Apache-2.0)",
+  "homepage": "https://ieumoffice.com/",
+  "version": "0.12.12",
+  "url": "https://github.com/pblsketch/ieumoffice/releases/download/v0.12.12/IeumOffice-0.12.12-arm64.dmg",
+  "sha256": "215dcdc83ae121574c0d11fecafb47ed323cb02f016ebb7a3f13bcb14ca56b3d",
+  "variations": {
+    "monterey": {
+      "url": "https://github.com/pblsketch/ieumoffice/releases/download/v0.12.12/IeumOffice-0.12.12-x64.dmg",
+      "sha256": "8a2a32345398fa5e111e25422590c6965d67dfe73c62fbf1f03f69a093a7542b"
+    },
+    "ventura": {
+      "url": "https://github.com/pblsketch/ieumoffice/releases/download/v0.12.12/IeumOffice-0.12.12-x64.dmg",
+      "sha256": "8a2a32345398fa5e111e25422590c6965d67dfe73c62fbf1f03f69a093a7542b"
+    },
+    "sonoma": {
+      "url": "https://github.com/pblsketch/ieumoffice/releases/download/v0.12.12/IeumOffice-0.12.12-x64.dmg",
+      "sha256": "8a2a32345398fa5e111e25422590c6965d67dfe73c62fbf1f03f69a093a7542b"
+    },
+    "sequoia": {
+      "url": "https://github.com/pblsketch/ieumoffice/releases/download/v0.12.12/IeumOffice-0.12.12-x64.dmg",
+      "sha256": "8a2a32345398fa5e111e25422590c6965d67dfe73c62fbf1f03f69a093a7542b"
+    },
+    "tahoe": {
+      "url": "https://github.com/pblsketch/ieumoffice/releases/download/v0.12.12/IeumOffice-0.12.12-x64.dmg",
+      "sha256": "8a2a32345398fa5e111e25422590c6965d67dfe73c62fbf1f03f69a093a7542b"
+    },
+    "golden_gate": {
+      "url": "https://github.com/pblsketch/ieumoffice/releases/download/v0.12.12/IeumOffice-0.12.12-x64.dmg",
+      "sha256": "8a2a32345398fa5e111e25422590c6965d67dfe73c62fbf1f03f69a093a7542b"
+    }
+  },
+  "depends_on": {"macos": {">=": ["12"]}},
+  "artifacts": [
+    {"app": ["IeumOffice.app"], "target": "/Applications/IeumOffice.app"}
+  ]
+}
