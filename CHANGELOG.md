@@ -1,5 +1,14 @@
 # 변경 기록
 
+## 0.4.0 (2026-11-16)
+
+새 기능
+- `install`/`info`에 `--brew`/`--port` 옵션 추가. 토큰이 Homebrew(cask/formula)와 MacPorts에
+  동시에 정확히 일치하면(예: `mole` — brew formula는 Mac 클리너, MacPorts port는 ssh 터널
+  도구로 서로 다른 프로그램) 자동으로 아무거나 고르지 않고 어느 쪽인지 명시하게 함
+- `info`가 이제 Homebrew formula·MacPorts port의 상세(버전/홈페이지/설명)도 보여줌
+  (전엔 cask·로컬 레시피·Mac App Store만 봐서 formula/port는 아예 조회가 안 됐음)
+
 ## 0.3.0 (2026-11-14)
 
 새 기능

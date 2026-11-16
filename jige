@@ -41,7 +41,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # formulae.brew.sh가 Python urllib의 기본 User-Agent("Python-urllib/3.x")를 유독
 # "Maximum threads for service reached" 503으로 많이 막는 걸 실측으로 확인함(curl이나
@@ -892,6 +892,74 @@ def fetch_mas_recipe(token: str, allow_mas: bool) -> dict | None:
     return None
 
 
+def find_exact_token_hits(token: str) -> dict[str, dict]:
+    """토큰과 정확히 이름이 같은 항목을 Homebrew cask/formula, MacPorts에서 찾음.
+    search의 _rank()는 느슨한 부분일치지만 여긴 완전 일치만 봄 — install/info에서
+    토큰이 여러 소스에 걸쳐 서로 다른 소프트웨어일 수 있을 때(예: mole = brew formula는
+    Mac 클리너, MacPorts port는 ssh 터널 도구) 자동으로 아무거나 고르지 않기 위한 용도."""
+    tl = token.lower()
+    hits: dict[str, dict] = {}
+
+    for entry in load_homebrew_index("cask"):
+        if entry.get("token", "").lower() == tl:
+            hits["cask"] = entry
+            break
+
+    for entry in load_homebrew_index("formula"):
+        if entry.get("name", "").lower() == tl:
+            hits["formula"] = entry
+            break
+
+    if current_os() == "macos":
+        try:
+            with urllib.request.urlopen(
+                f"{MACPORTS_SEARCH_API}?search={urllib.parse.quote(token)}", timeout=10
+            ) as r:
+                data = json.load(r)
+            for entry in data.get("results", []):
+                if entry.get("name", "").lower() == tl:
+                    hits["port"] = entry
+                    break
+        except Exception:
+            pass  # MacPorts 조회 실패는 무시 — brew 쪽 결과만으로도 판단 가능
+
+    return hits
+
+
+SOURCE_KIND_LABEL = {"cask": "brew (jim, GUI)", "formula": "brew (dogu, CLI)", "port": "port (MacPorts)"}
+
+
+def disambiguate_source(token: str, brew: bool = False, port: bool = False) -> dict:
+    """토큰이 brew(cask/formula)와 MacPorts에 동시에 정확히 일치하면 --brew/--port 없인
+    진행하지 않음 — 서로 다른 프로그램일 위험(mole 사례)이 있어서 자동 선택 금지.
+    반환: {"kind": "cask"|"formula"|"port", "entry": {...}} 또는, 어디에도 정확히 일치하는
+    게 없으면 빈 dict(로컬 recipes/MAS 등 기존 경로로 계속 찾게 둠 — 이 경우는 안전함).
+    brew/port 동시 지정은 argparse의 mutually_exclusive_group이 이미 막음."""
+    hits = find_exact_token_hits(token)
+    if not hits:
+        return {}
+
+    if brew:
+        hits.pop("port", None)
+    elif port:
+        hits.pop("cask", None)
+        hits.pop("formula", None)
+
+    if brew or port:
+        if not hits:
+            sys.exit(f"'{token}'는 {'Homebrew' if brew else 'MacPorts'}에 정확히 일치하는 게 없습니다.")
+
+    if len(hits) > 1:
+        print(f"'{token}'와 정확히 이름이 같은 게 여러 소스에 있습니다 — 서로 다른 프로그램일 수 있어서 자동으로 고르지 않습니다:")
+        for kind, entry in hits.items():
+            desc = entry.get("desc") or entry.get("description") or ""
+            print(f"  [{SOURCE_KIND_LABEL[kind]}] {desc}")
+        sys.exit(f"-> --brew 또는 --port로 어느 쪽인지 지정하세요 (예: jige install {token} --port)")
+
+    kind, entry = next(iter(hits.items()))
+    return {"kind": kind, "entry": entry}
+
+
 def fetch_recipe(token: str, allow_mas: bool = False) -> tuple[dict, str]:
     """(레시피, 출처설명) 반환. 로컬 recipes/ -> Homebrew-Cask -> Mac App Store 순으로 찾음."""
     local_path = LOCAL_RECIPES_DIR / f"{token}.json"
@@ -1528,12 +1596,21 @@ def resolve_version_for_this_mac(
     return legacy_recipe, legacy
 
 
-def cmd_install(token: str, mas: bool = False, latest: bool = False, find_legacy: bool = False) -> None:
+def cmd_install(
+    token: str, mas: bool = False, latest: bool = False, find_legacy: bool = False,
+    brew: bool = False, port: bool = False,
+) -> None:
     codename = sw_vers_codename()
     cpu = arch()
     print(f"macOS 코드네임: {codename} / 아키텍처: {cpu}")
 
     cask_rb_match = CASK_RB_RAW_URL_RE.match(token)
+    if not cask_rb_match:
+        chosen = disambiguate_source(token, brew=brew, port=port)
+        if chosen.get("kind") == "formula":
+            sys.exit(f"{token}: Homebrew formula(dogu) 설치는 jige에 아직 없습니다 — 'brew install {token}'로 직접 설치하세요.")
+        if chosen.get("kind") == "port":
+            sys.exit(f"{token}: MacPorts 설치는 jige에 아직 없습니다 — 'sudo port install {token}'로 직접 설치하세요.")
     legacy_used = None
     if cask_rb_match:
         # brew install --cask <raw url>와 똑같은 발상 — Homebrew-Cask의 특정 커밋(과거
@@ -1634,7 +1711,29 @@ def cmd_install(token: str, mas: bool = False, latest: bool = False, find_legacy
     print(f"완료: {app_label}  {before or '(미설치)'} -> {after}")
 
 
-def cmd_info(token: str) -> None:
+def cmd_info(token: str, brew: bool = False, port: bool = False) -> None:
+    chosen = disambiguate_source(token, brew=brew, port=port)
+    if chosen.get("kind") == "formula":
+        entry = chosen["entry"]
+        print(f"이름       : {entry.get('name')}")
+        print(f"출처       : Homebrew formula (dogu, CLI) — jige 설치 미지원, 'brew install {token}'로 직접 설치")
+        print(f"버전       : {(entry.get('versions') or {}).get('stable', '?')}")
+        if entry.get("homepage"):
+            print(f"홈페이지   : {entry['homepage']}")
+        if entry.get("desc"):
+            print(f"설명       : {entry['desc']}")
+        return
+    if chosen.get("kind") == "port":
+        entry = chosen["entry"]
+        print(f"이름       : {entry.get('name')}")
+        print(f"출처       : MacPorts — jige 설치 미지원, 'sudo port install {token}'로 직접 설치")
+        print(f"버전       : {entry.get('version', '?')}")
+        if entry.get("homepage"):
+            print(f"홈페이지   : {entry['homepage']}")
+        if entry.get("description"):
+            print(f"설명       : {entry['description']}")
+        return
+
     recipe, source = fetch_recipe(token)
     name = recipe.get("name")
     name = name[0] if isinstance(name, list) else name
@@ -2099,6 +2198,13 @@ def main() -> None:
         "--find-legacy", action="store_true",
         help="저장소에 대체판이 없어도 Homebrew-Cask 커밋 기록에서 즉석으로 찾아봄 (시간 좀 걸림)"
     )
+    p_install_source = p_install.add_mutually_exclusive_group()
+    p_install_source.add_argument(
+        "--brew", action="store_true", help="토큰이 brew/port에 동시에 있을 때 brew 쪽으로 지정"
+    )
+    p_install_source.add_argument(
+        "--port", action="store_true", help="토큰이 brew/port에 동시에 있을 때 MacPorts 쪽으로 지정"
+    )
 
     p_search = sub.add_parser(
         "search", help=t("help_search"),
@@ -2118,6 +2224,13 @@ def main() -> None:
 
     p_info = sub.add_parser("info", help=t("help_info"))
     p_info.add_argument("token")
+    p_info_source = p_info.add_mutually_exclusive_group()
+    p_info_source.add_argument(
+        "--brew", action="store_true", help="토큰이 brew/port에 동시에 있을 때 brew 쪽으로 지정"
+    )
+    p_info_source.add_argument(
+        "--port", action="store_true", help="토큰이 brew/port에 동시에 있을 때 MacPorts 쪽으로 지정"
+    )
 
     p_uninstall = sub.add_parser(
         "uninstall", aliases=["remove"], help=t("help_uninstall")
@@ -2151,13 +2264,16 @@ def main() -> None:
         cmd_completion(args.shell)
         return
     if args.command == "install":
-        cmd_install(args.token, mas=args.mas, latest=args.latest, find_legacy=args.find_legacy)
+        cmd_install(
+            args.token, mas=args.mas, latest=args.latest, find_legacy=args.find_legacy,
+            brew=args.brew, port=args.port,
+        )
     elif args.command == "search":
         cmd_search(" ".join(args.query), mas=args.mas)
     elif args.command == "config":
         cmd_config(args.key, args.value)
     elif args.command == "info":
-        cmd_info(args.token)
+        cmd_info(args.token, brew=args.brew, port=args.port)
     elif args.command in ("uninstall", "remove"):
         cmd_uninstall(args.token, zap=args.zap)
     elif args.command in ("list", "installed"):
