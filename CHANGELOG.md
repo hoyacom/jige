@@ -1,5 +1,15 @@
 # 변경 기록
 
+## 0.5.1 (2026-11-17)
+
+고친 것
+- install.sh: Xcode CLT는 있는데(`xcode-select -p` 성공) Xcode 라이선스 동의가
+  안 된 상태(예: Xcode.app은 깔려있는데 한 번도 안 열어본 경우)를 못 잡아서,
+  안내 없이 git clone 하다가 Apple의 긴 라이선스 텍스트가 갑자기 튀어나오던
+  문제 — Big Sur에서 실제로 겪음(페이저 끝까지 못 보고 agree 입력 못 한 채 종료).
+  `git --version`으로 조용히 먼저 확인해서, 문제면 `sudo xcodebuild -license
+  accept`를 안내하고 멈춤(페이저 자체가 아예 안 뜨게 됨).
+
 ## 0.5.0 (2026-11-17)
 
 새 기능

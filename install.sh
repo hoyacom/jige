@@ -38,6 +38,23 @@ if ! command -v git >/dev/null 2>&1; then
   exit 1
 fi
 
+if [ "$(uname -s)" = "Darwin" ]; then
+  # xcode-select -p가 성공해도(위 블록을 그냥 통과해도) Xcode 라이선스 동의가 안
+  # 돼있을 수 있음 — 예: Xcode.app은 깔려있는데 한 번도 열어본 적이 없는 경우.
+  # 이 상태에서 바로 git clone을 하면 Apple이 아무 설명 없이 긴 라이선스 텍스트를
+  # 페이저로 띄우는데, 안내 없이 갑자기 나와서 끝까지 못 보고(Space만 누르다 페이저가
+  # 끝나버림) agree를 못 친 채 종료되는 사고가 실제로 있었음. git --version(읽기
+  # 전용, 부작용 없음)으로 먼저 조용히 확인해서 jige가 먼저 분명하게 안내함.
+  LICENSE_CHECK="$(git --version 2>&1 >/dev/null || true)"
+  if echo "$LICENSE_CHECK" | grep -qi "license"; then
+    echo "Xcode 라이선스에 아직 동의가 안 된 상태입니다." >&2
+    echo "-> 아래 한 줄을 먼저 실행해서 동의한 뒤(관리자 비밀번호 필요, 페이저 안 뜨고 바로 끝남)," >&2
+    echo "   이 jige 설치 명령을 다시 실행해주세요:" >&2
+    echo "  sudo xcodebuild -license accept" >&2
+    exit 1
+  fi
+fi
+
 if [ -d "$INSTALL_DIR/.git" ]; then
   echo "jige 업데이트 중: $INSTALL_DIR"
   git -C "$INSTALL_DIR" pull --ff-only
