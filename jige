@@ -40,7 +40,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-__version__ = "0.5.2"
+__version__ = "0.6.0"
 
 # formulae.brew.sh가 Python urllib의 기본 User-Agent("Python-urllib/3.x")를 유독
 # "Maximum threads for service reached" 503으로 많이 막는 걸 실측으로 확인함(curl이나
@@ -91,6 +91,16 @@ SOURCE_LABEL = {
 MACOS_CODENAME = {
     "10.15": "catalina", "11": "big_sur", "12": "monterey", "13": "ventura",
     "14": "sonoma", "15": "sequoia", "26": "tahoe", "27": "golden_gate",
+}
+
+MACPORTS_RELEASES_API = "https://api.github.com/repos/macports/macports-base/releases/latest"
+
+# MacPorts 공식 .pkg 파일명에 쓰이는 macOS 버전 토큰 — MACOS_CODENAME과 메이저 버전 키는
+# 같지만 표기(여기는 "11-BigSur"처럼 대문자+붙여쓰기)가 달라서 별도 표로 둠. 실제 릴리스
+# (github.com/macports/macports-base/releases)의 자산 이름으로 직접 확인한 값.
+MACPORTS_PKG_OS_TOKEN = {
+    "10.15": "10.15-Catalina", "11": "11-BigSur", "12": "12-Monterey", "13": "13-Ventura",
+    "14": "14-Sonoma", "15": "15-Sequoia", "26": "26-Tahoe", "27": "27-GoldenGate",
 }
 
 def sw_vers_codename() -> str:
@@ -1069,6 +1079,15 @@ def sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
+def sha1_of(path: Path) -> str:
+    """MacPorts의 .pkg 릴리스는 sha256이 아니라 sha1만 제공해서 따로 둠(소스 tar만 sha256 있음)."""
+    h = hashlib.sha1()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def download(url: str, dest: Path) -> None:
     if dest.exists():
         print(f"캐시 사용: {dest.name}")
@@ -1613,6 +1632,168 @@ def install_via_mas(token: str, recipe: dict) -> None:
     print(f"완료: {token} (Mac App Store, id {mas_id}, 버전 {recipe.get('version')})")
 
 
+HOMEBREW_INSTALL_SCRIPT_URL = (
+    "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
+)
+
+
+def ensure_brew_installed() -> None:
+    """brew가 없으면 brew.sh 공식 설치 스크립트를 그대로 돌릴지 물어봄.
+    bottle 재배치를 jige가 직접 구현하는 대신 진짜 brew를 쓰기로 한 이상, brew 자체도
+    jige가 새로 만들지 않고 Homebrew의 공식 설치기를 그대로 호출 — install.sh가 Xcode
+    Command Line Tools 없을 때 GUI 설치기로 유도하는 것과 같은 '기존 설치기에 위임' 패턴.
+    비대화형(파이프/스크립트)에서는 silently sudo 설치기를 돌리지 않고 안내만 하고 멈춤."""
+    if shutil.which("brew"):
+        return
+    print("이 머신엔 Homebrew(brew)가 없습니다 — CLI 도구(dogu) 설치엔 brew가 필요합니다.")
+    if not sys.stdin.isatty():
+        sys.exit(
+            "-> https://brew.sh 의 설치 스크립트를 먼저 실행한 뒤 다시 시도하세요\n"
+            "   (비대화형 실행이라 jige가 직접 묻지 않고 여기서 멈춥니다)."
+        )
+    answer = input(
+        "지금 brew.sh 공식 설치 스크립트로 Homebrew를 설치할까요? "
+        "(관리자 비밀번호 필요) [y/N] "
+    ).strip().lower()
+    if answer != "y":
+        sys.exit("-> https://brew.sh 에서 나중에 직접 설치할 수 있습니다.")
+
+    print("brew.sh 공식 설치 스크립트를 실행합니다...")
+    try:
+        subprocess.run(
+            ["/bin/bash", "-c", f'$(curl -fsSL {HOMEBREW_INSTALL_SCRIPT_URL})'],
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"Homebrew 설치 실패 (종료 코드 {e.returncode}) — https://brew.sh 안내를 참고해 직접 설치해주세요.")
+
+    if not shutil.which("brew"):
+        # 방금 설치됐어도 이 프로세스의 PATH엔 아직 없을 수 있음(셸 rc 재적용 전) —
+        # Apple Silicon/Intel 표준 설치 경로를 직접 찾아서 이번 실행에서만 PATH에 추가.
+        for candidate in (Path("/opt/homebrew/bin/brew"), Path("/usr/local/bin/brew")):
+            if candidate.exists():
+                os.environ["PATH"] = f"{candidate.parent}:{os.environ.get('PATH', '')}"
+                break
+    if not shutil.which("brew"):
+        sys.exit("Homebrew는 설치된 것 같지만 이번 실행에서 못 찾았습니다 — 터미널을 새로 열고 다시 시도해주세요.")
+
+
+def install_via_brew_formula(token: str, entry: dict) -> None:
+    """brew install <formula>를 그대로 호출. Homebrew formula(bottle)는 바이너리에
+    /opt/homebrew(또는 /usr/local) 경로가 하드코딩돼 있어서 Homebrew 디렉터리 구조 없이
+    jige가 직접 재배치해 설치하면 깨짐 — 그래서 재구현하지 않고 이미 설치된(또는 방금 설치한)
+    진짜 brew에 설치/의존성 해결을 그대로 위임함(mas install을 그대로 부르는 것과 같은 방식)."""
+    name = entry.get("name", token)
+    ensure_brew_installed()
+    print(f"brew install {name} 실행 중...")
+    try:
+        subprocess.run(["brew", "install", name], check=True)
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"{token}: brew install 실패 (종료 코드 {e.returncode})")
+
+    state = load_state()
+    state[token] = {
+        "name": name,
+        "version": (entry.get("versions") or {}).get("stable"),
+        "source": "brew-formula",
+        "installed_at": datetime.datetime.now().isoformat(timespec="seconds"),
+    }
+    save_state(state)
+    print(f"완료: {token} (brew formula)")
+
+
+def ensure_port_installed() -> None:
+    """port가 없으면 MacPorts 공식 GitHub Release의 .pkg를 받아서 설치할지 물어봄.
+    brew.sh 같은 단일 curl 스크립트가 없는 대신(macOS 버전별 .pkg 배포) — jige가 이미
+    cask .pkg 설치에 쓰는 run_pkg_installer()를 그대로 재사용할 수 있어서, 공식 설치기에
+    위임하는 대신 jige 스스로 받아서 체크섬 검증 후 설치함(ensure_brew_installed와 같은
+    확인 패턴: 비대화형에선 묻지 않고 안내만 하고 멈춤)."""
+    if shutil.which("port"):
+        return
+    print("이 머신엔 MacPorts(port)가 없습니다 — MacPorts 항목 설치엔 port가 필요합니다.")
+    if not sys.stdin.isatty():
+        sys.exit(
+            "-> https://www.macports.org/install.php 에서 먼저 설치한 뒤 다시 시도하세요\n"
+            "   (비대화형 실행이라 jige가 직접 묻지 않고 여기서 멈춥니다)."
+        )
+    answer = input(
+        "지금 MacPorts 공식 .pkg(GitHub Releases)를 받아서 설치할까요? "
+        "(관리자 비밀번호 필요) [y/N] "
+    ).strip().lower()
+    if answer != "y":
+        sys.exit("-> https://www.macports.org/install.php 에서 나중에 직접 설치할 수 있습니다.")
+
+    ver = subprocess.check_output(["sw_vers", "-productVersion"], text=True).strip()
+    major = ver.split(".")[0]
+    os_token = MACPORTS_PKG_OS_TOKEN.get("10.15" if major == "10" else major)
+    if not os_token:
+        sys.exit(
+            f"이 macOS 메이저버전({major})용 MacPorts .pkg 파일명을 jige가 아직 모름.\n"
+            "-> https://www.macports.org/install.php 에서 직접 설치하세요."
+        )
+
+    with urllib.request.urlopen(MACPORTS_RELEASES_API, timeout=15) as r:
+        release = json.load(r)
+    assets = {a["name"]: a["browser_download_url"] for a in release.get("assets", [])}
+    pkg_name = next((n for n in assets if n.endswith(f"-{os_token}.pkg")), None)
+    chk_name = next((n for n in assets if n.endswith(".chk.txt")), None)
+    if not pkg_name or not chk_name:
+        sys.exit(
+            f"MacPorts 최신 릴리스({release.get('tag_name', '?')})에서 이 macOS용 .pkg나 체크섬 파일을 못 찾음.\n"
+            "-> https://www.macports.org/install.php 에서 직접 설치하세요."
+        )
+
+    with urllib.request.urlopen(assets[chk_name], timeout=15) as r:
+        chk_text = r.read().decode()
+    # .pkg는 sha256이 없고 sha1만 제공됨(소스 tar만 sha256 있음) — 그래도 공식 릴리스가
+    # 직접 publish한 값이라 AI 요약/추정이 아닌, jige의 기존 체크섬 원칙과 같은 선상.
+    m = re.search(rf"^SHA1\({re.escape(pkg_name)}\)=\s*([0-9a-f]{{40}})", chk_text, re.M)
+    if not m:
+        sys.exit(f"{pkg_name}의 체크섬을 {chk_name}에서 못 찾음 — https://www.macports.org/install.php 에서 직접 설치하세요.")
+    expected_sha1 = m.group(1)
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    pkg_path = CACHE_DIR / pkg_name
+    download(assets[pkg_name], pkg_path)
+    actual_sha1 = sha1_of(pkg_path)
+    if actual_sha1 != expected_sha1:
+        pkg_path.unlink()
+        sys.exit(f"sha1 불일치! 기대값={expected_sha1} 실제값={actual_sha1} — 다운로드 파일 삭제, 설치 중단.")
+    print("체크섬 일치 확인됨.")
+    run_pkg_installer(pkg_path, [pkg_name])
+
+    if not shutil.which("port"):
+        # 설치 직후 이 프로세스 PATH엔 아직 없을 수 있음 — MacPorts 표준 경로를 직접 추가.
+        for candidate in (Path("/opt/local/bin"), Path("/opt/local/sbin")):
+            if candidate.exists():
+                os.environ["PATH"] = f"{candidate}:{os.environ.get('PATH', '')}"
+    if not shutil.which("port"):
+        sys.exit("MacPorts는 설치된 것 같지만 이번 실행에서 못 찾았습니다 — 터미널을 새로 열고 다시 시도해주세요.")
+
+
+def install_via_port(token: str, entry: dict) -> None:
+    """sudo port install <port>를 그대로 호출. MacPorts도 brew와 같은 이유(자체 디렉터리
+    구조에 맞물린 바이너리)로 jige가 직접 재구현해 설치하지 않고, 이미 설치돼 있거나
+    (ensure_port_installed가) 방금 설치한 진짜 port에 install만 위임함."""
+    name = entry.get("name", token)
+    ensure_port_installed()
+    print(f"sudo port install {name} 실행 중...")
+    try:
+        subprocess.run(["sudo", "port", "install", name], check=True)
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"{token}: port install 실패 (종료 코드 {e.returncode})")
+
+    state = load_state()
+    state[token] = {
+        "name": name,
+        "version": entry.get("version"),
+        "source": "macports",
+        "installed_at": datetime.datetime.now().isoformat(timespec="seconds"),
+    }
+    save_state(state)
+    print(f"완료: {token} (MacPorts)")
+
+
 def resolve_version_for_this_mac(
     token: str, recipe: dict, cpu: str, force_latest: bool, force_find_legacy: bool = False
 ) -> tuple[dict, dict | None]:
@@ -1744,9 +1925,11 @@ def cmd_install(
     cask_rb_match = CASK_RB_RAW_URL_RE.match(token)
     chosen = {} if cask_rb_match else disambiguate_source(token, repo=repo)
     if chosen.get("kind") == "formula":
-        sys.exit(f"{token}: Homebrew formula(dogu) 설치는 jige에 아직 없습니다 — 'brew install {token}'로 직접 설치하세요.")
+        install_via_brew_formula(token, chosen["entry"])
+        return
     if chosen.get("kind") == "port":
-        sys.exit(f"{token}: MacPorts 설치는 jige에 아직 없습니다 — 'sudo port install {token}'로 직접 설치하세요.")
+        install_via_port(token, chosen["entry"])
+        return
 
     legacy_used = None
     if cask_rb_match:
@@ -1873,7 +2056,7 @@ def cmd_info(token: str, repo: str | None = None) -> None:
     if chosen.get("kind") == "formula":
         entry = chosen["entry"]
         print(f"이름       : {entry.get('name')}")
-        print(f"출처       : Homebrew formula (dogu, CLI) — jige 설치 미지원, 'brew install {token}'로 직접 설치")
+        print(f"출처       : Homebrew formula (dogu, CLI) — jige install이 'brew install {token}'을 그대로 호출")
         print(f"버전       : {(entry.get('versions') or {}).get('stable', '?')}")
         if entry.get("homepage"):
             print(f"홈페이지   : {entry['homepage']}")
@@ -1883,7 +2066,7 @@ def cmd_info(token: str, repo: str | None = None) -> None:
     if chosen.get("kind") == "port":
         entry = chosen["entry"]
         print(f"이름       : {entry.get('name')}")
-        print(f"출처       : MacPorts — jige 설치 미지원, 'sudo port install {token}'로 직접 설치")
+        print(f"출처       : MacPorts — jige install이 'sudo port install {token}'을 그대로 호출(port 없으면 설치 여부부터 물어봄)")
         print(f"버전       : {entry.get('version', '?')}")
         if entry.get("homepage"):
             print(f"홈페이지   : {entry['homepage']}")
@@ -2117,6 +2300,35 @@ def run_uninstall_steps(steps: list[dict]) -> None:
 def cmd_uninstall(token: str, zap: bool = False) -> None:
     state = load_state()
     entry = state.get(token) or {}
+
+    if entry.get("source") == "brew-formula":
+        # formula는 jige가 설치도 brew에 위임했으니 제거도 동일하게 위임 — fetch_recipe는
+        # cask/로컬/MAS만 봐서 formula 토큰을 못 찾고 아래 블록이 엉뚱하게 실패함.
+        name = entry.get("name", token)
+        if not shutil.which("brew"):
+            sys.exit(f"brew가 없어서 제거 못 함 — 'brew uninstall {name}'로 직접 제거하세요.")
+        try:
+            subprocess.run(["brew", "uninstall", name], check=True)
+        except subprocess.CalledProcessError as e:
+            sys.exit(f"{token}: brew uninstall 실패 (종료 코드 {e.returncode})")
+        del state[token]
+        save_state(state)
+        print(f"완료: {token} 제거 (brew uninstall)")
+        return
+
+    if entry.get("source") == "macports":
+        name = entry.get("name", token)
+        if not shutil.which("port"):
+            sys.exit(f"port가 없어서 제거 못 함 — 'sudo port uninstall {name}'로 직접 제거하세요.")
+        try:
+            subprocess.run(["sudo", "port", "uninstall", name], check=True)
+        except subprocess.CalledProcessError as e:
+            sys.exit(f"{token}: port uninstall 실패 (종료 코드 {e.returncode})")
+        del state[token]
+        save_state(state)
+        print(f"완료: {token} 제거 (port uninstall)")
+        return
+
     try:
         recipe, _ = fetch_recipe(token)
     except (SystemExit, Exception):

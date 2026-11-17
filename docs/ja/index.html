@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>jige — Homebrewが見捨てたMacのためのパッケージマネージャー</title>
-<meta name="description" content="Homebrewがサポートを打ち切った古いMac向けのパッケージマネージャー。Homebrew・MacPortsの公開レシピをそのまま読み、このマシンのOS・アーキテクチャに合うビルドをインストールします。Homebrew自体のインストールは不要。">
+<meta name="description" content="Homebrew・MacPorts・自分のリポジトリを一つにまとめるパッケージマネージャー。公開レシピを読んで合うビルドを見つけ、brew/portが無ければjigeが代わりに入れます。Homebrewがサポートを打ち切った古いMacにも対応。">
 <meta property="og:type" content="website">
 <meta property="og:title" content="jige — Homebrewが見捨てたMacのためのパッケージマネージャー">
 <meta property="og:description" content="Homebrewがサポートを打ち切った古いMac向けのパッケージマネージャー。">
@@ -153,7 +153,7 @@
       <path d="M22 50 Q60 28 98 50 L92 72 Q60 56 28 72 Z" fill="#d98b3f" stroke="#b5541e" stroke-width="3" stroke-linejoin="round"/>
     </svg>
     <h1><span class="hangul">지게</span> jige</h1>
-    <p class="tagline">brewもportも要らない — この機種に合うアプリを探してインストール</p>
+    <p class="tagline">brew・port・自分のリポジトリをまとめて管理 — 無ければjigeが入れて、古いMacには代替案も探します</p>
     <p class="eyebrow">Homebrewがサポートを打ち切った古いMacのためのパッケージマネージャー<br>
     Monterey以前もそのままカバーします。</p>
 
@@ -162,7 +162,7 @@
       <code id="install-cmd">/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hoyacom/jige/main/install.sh)"</code>
       <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('install-cmd').textContent); this.textContent='コピーしました ✓'; setTimeout(()=>this.textContent='コピー',1500)">コピー</button>
     </div>
-    <p class="sub-install">新品のMacでも大丈夫 — HomebrewもMacPortsも事前インストール不要です。</p>
+    <p class="sub-install">新品のMacでも大丈夫 — brewやportが無くても、必要ならjigeがインストールまで手伝います。</p>
 
     <figure class="jige-photo">
       <img src="https://upload.wikimedia.org/wikipedia/commons/1/12/%28Porter_carrying_clay_pots_strapped_to_A-frame_on_his_back%29_%284095353619%29.jpg"
@@ -183,9 +183,10 @@
     古いmacOS(Monterey、Big Sur、Catalinaなど)で<code>brew doctor</code>を実行すると
     "Your Mac OS is too old" といった警告が出て、<code>brew install</code>がbottleの配布を
     止めてしまうことがあります。Apple Siliconではない古いIntel Mac(2015年製iMacなど)も、
-    公式サポート対象から外れてしまうのは同じです。jigeはそんな機種でも——Homebrewを
-    インストールしなくても——Homebrew・MacPortsが公開しているレシピをそのまま読んで、
-    このマシンのOS・アーキテクチャに合うビルドを見つけてインストールします。</p>
+    公式サポート対象から外れてしまうのは同じです。jigeはそんな機種でも、
+    Homebrew・MacPortsが公開しているレシピをそのまま読んで、合うビルドを見つけます。
+    GUIアプリはHomebrewのインストールなしでそのまま入り、CLIツールやMacPortsが
+    必要なときは——足りないbrew/portもjigeが代わりに入れて引き継ぎます。</p>
   </div>
 </section>
 

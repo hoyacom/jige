@@ -1,5 +1,19 @@
 # 변경 기록
 
+## 0.6.0 (2026-11-18)
+
+새 기능
+- CLI 도구(dogu, Homebrew formula) 실설치 지원 — jige가 bottle을 직접 재배치하지 않고
+  (바이너리에 Homebrew 경로가 하드코딩돼 있어 깨짐) 이미 설치된(또는 방금 설치한) 진짜
+  `brew install <formula>`를 그대로 호출. brew가 없으면 지금 brew.sh 공식 설치 스크립트로
+  설치할지 물어봄(비대화형 실행에선 묻지 않고 안내만 하고 멈춤). `jige uninstall`도 이렇게
+  설치한 건 `brew uninstall`로 위임
+- MacPorts(port)도 같은 방식으로 실설치 지원 — `sudo port install <포트>`를 그대로 호출.
+  port가 없으면 공식 GitHub Release(macports/macports-base)에서 이 macOS 버전에 맞는
+  .pkg를 찾아 체크섬(sha1 — 이 릴리스는 sha256을 안 줌) 검증 후 jige가 직접 설치할지
+  물어봄(brew.sh 같은 단일 설치 스크립트가 없어서, 공식 설치기 대신 jige가 기존 .pkg
+  설치 경로를 재사용해 스스로 설치)
+
 ## 0.5.2 (2026-11-17)
 
 고친 것

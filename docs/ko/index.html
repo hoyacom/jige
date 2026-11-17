@@ -157,7 +157,7 @@
       <path d="M22 50 Q60 28 98 50 L92 72 Q60 56 28 72 Z" fill="#d98b3f" stroke="#b5541e" stroke-width="3" stroke-linejoin="round"/>
     </svg>
     <h1><span class="hangul">지게</span> jige</h1>
-    <p class="tagline">brew 없이도, port 없이도 — 이 기기에 맞는 앱을 찾아서 날라다 설치</p>
+    <p class="tagline">brew·port·내 저장소를 한 곳에서 — 없으면 jige가 깔아주고, 오래된 Mac엔 대안까지</p>
     <p class="eyebrow">Homebrew가 더 이상 지원하지 않는 오래된 Mac을 위한 패키지 관리자<br>
     <span class="en">A package manager for old Macs that Homebrew dropped support for — Monterey and earlier, still covered.</span></p>
 
@@ -166,7 +166,7 @@
       <code id="install-cmd">/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hoyacom/jige/main/install.sh)"</code>
       <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('install-cmd').textContent); this.textContent='복사됨 ✓'; setTimeout(()=>this.textContent='복사',1500)">복사</button>
     </div>
-    <p class="sub-install">새 Mac이어도 상관없습니다 — Homebrew도 MacPorts도 설치돼 있을 필요 없습니다.</p>
+    <p class="sub-install">새 Mac이어도 상관없습니다 — brew/port가 없어도, 필요하면 jige가 설치까지 도와줍니다.</p>
 
     <figure class="jige-photo">
       <img src="https://upload.wikimedia.org/wikipedia/commons/1/12/%28Porter_carrying_clay_pots_strapped_to_A-frame_on_his_back%29_%284095353619%29.jpg"
@@ -189,13 +189,15 @@
     <code>brew install</code>이 구버전 macOS(Monterey, Big Sur, Catalina…)에서
     더 이상 bottle을 안 받아줄 때가 있습니다. Apple Silicon이 아닌 오래된 Intel Mac,
     2015년식 iMac처럼 더 이상 공식 지원 목록에 없는 기기도 마찬가지입니다.
-    jige는 이런 기기에서도 — Homebrew를 설치하지 않고도 — Homebrew·MacPorts가
-    공개해둔 레시피를 그대로 읽어서 이 기기에 맞는 버전을 찾아 설치합니다.</p>
+    jige는 이런 기기에서도 Homebrew·MacPorts가 공개해둔 레시피를 그대로 읽어서 맞는 버전을
+    찾아줍니다. GUI 앱은 brew 설치 없이 바로 깔리고, CLI 도구나 MacPorts 쪽이 필요하면 —
+    없는 brew/port까지 jige가 대신 설치해서 넘겨줍니다.</p>
     <p class="lead" style="font-style:italic; color:var(--ink-soft)">
     If <code>brew</code> refuses to run on your old macOS (Monterey, Big Sur, or earlier)
     or your unsupported Intel Mac, jige reads Homebrew's and MacPorts' own public recipe
-    data over plain HTTP — no Homebrew installation required — and installs the right
-    build for your exact OS and architecture.</p>
+    data to find the right build. GUI apps install straight away with no Homebrew
+    needed; for CLI tools or MacPorts, jige sets up brew/port for you first if they're
+    missing.</p>
   </div>
 </section>
 

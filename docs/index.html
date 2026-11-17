@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>jige — a package manager for Macs Homebrew left behind</title>
-<meta name="description" content="A package manager for old Macs Homebrew dropped support for. jige reads Homebrew's and MacPorts' own public recipes and installs the right build for your exact OS and architecture — no Homebrew installation required.">
+<meta name="description" content="A package manager unifying Homebrew, MacPorts, and your own repositories. jige reads their public recipes to find the right build for your exact OS and architecture — and sets up brew/port for you if they're missing, including on old Macs Homebrew left behind.">
 <meta name="keywords" content="homebrew alternative, old mac package manager, homebrew unsupported macOS, macports, brew for monterey, legacy mac homebrew">
 <meta property="og:type" content="website">
 <meta property="og:title" content="jige — a package manager for Macs Homebrew left behind">
@@ -167,7 +167,7 @@
       <path d="M22 50 Q60 28 98 50 L92 72 Q60 56 28 72 Z" fill="#d98b3f" stroke="#b5541e" stroke-width="3" stroke-linejoin="round"/>
     </svg>
     <h1><span class="hangul">지게</span> jige</h1>
-    <p class="tagline">No brew. No port. jige finds and installs the right build for this machine.</p>
+    <p class="tagline">brew, port, and your own repo — managed as one. Missing a package manager? jige installs it. Mac too old? jige finds another way.</p>
     <p class="eyebrow">A package manager for old Macs that Homebrew dropped support for —<br>
     Monterey and earlier, still covered.</p>
 
@@ -176,7 +176,7 @@
       <code id="install-cmd">/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hoyacom/jige/main/install.sh)"</code>
       <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('install-cmd').textContent); this.textContent='Copied ✓'; setTimeout(()=>this.textContent='Copy',1500)">Copy</button>
     </div>
-    <p class="sub-install">Works on a brand new Mac too — neither Homebrew nor MacPorts need to be installed first.</p>
+    <p class="sub-install">Works on a brand new Mac too — if brew or port is missing, jige offers to install it for you.</p>
 
     <figure class="jige-photo">
       <img src="https://upload.wikimedia.org/wikipedia/commons/1/12/%28Porter_carrying_clay_pots_strapped_to_A-frame_on_his_back%29_%284095353619%29.jpg"
@@ -197,9 +197,10 @@
     Run <code>brew doctor</code> on an old macOS (Monterey, Big Sur, Catalina…) and you'll see
     warnings like "Your Mac OS is too old" — <code>brew install</code> can simply stop shipping
     bottles for it. Older Intel Macs, like a 2015 iMac, fall off the officially supported list the
-    same way. jige reads Homebrew's and MacPorts' own public recipe data over plain HTTP — no
-    Homebrew installation required — and installs the right build for your exact OS and
-    architecture, even on a machine brew has already given up on.</p>
+    same way. jige reads Homebrew's and MacPorts' own public recipe data to find the right
+    build for your exact OS and architecture. GUI apps install straight away, no Homebrew
+    required; for CLI tools or MacPorts, jige sets up brew/port for you first if they're
+    missing — even on a machine brew has already given up on.</p>
   </div>
 </section>
 

@@ -1,6 +1,6 @@
 # jige (지게)
 
-**brew 없이도, port 없이도 Mac에 맞는 앱을 찾아서 설치해주는 도구.**
+**brew·port·내 저장소를 한 곳에서 — 없으면 jige가 깔아주고, 오래된 Mac엔 대안까지 찾아주는 도구.**
 
 🔗 [hoyacom.github.io/jige](https://hoyacom.github.io/jige/) · [한국어](https://hoyacom.github.io/jige/ko/) · [日本語](https://hoyacom.github.io/jige/ja/) · [변경 기록](CHANGELOG.md)
 
@@ -54,7 +54,10 @@ $ jige install hop
 
 ## 한계
 
-- 설치는 GUI 앱(jim)만 됩니다. CLI 도구(dogu)와 MacPorts는 아직 검색만 됩니다.
+- CLI 도구(dogu)는 brew가 있으면 `brew install`을, MacPorts 항목은 port가 있으면
+  `sudo port install`을 그대로 호출해 설치합니다. brew/port가 없으면 설치할지 먼저
+  물어봅니다(brew는 공식 설치 스크립트, MacPorts는 공식 GitHub Release의 .pkg를
+  체크섬 검증 후 설치).
 - 과거 버전은 Homebrew가 기록해둔 버전 중에서만 찾습니다(벤더의 모든 패치가 있지는 않음).
 
 ## 라이선스
