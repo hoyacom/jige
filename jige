@@ -35,13 +35,12 @@ import subprocess
 import sys
 import tempfile
 import time
-import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
 
 # formulae.brew.sh가 Python urllib의 기본 User-Agent("Python-urllib/3.x")를 유독
 # "Maximum threads for service reached" 503으로 많이 막는 걸 실측으로 확인함(curl이나
@@ -52,6 +51,20 @@ _opener.addheaders = [("User-Agent", f"jige/{__version__} (+https://github.com/h
 urllib.request.install_opener(_opener)
 
 REPO_ROOT = Path(__file__).resolve().parent
+# jige는 symlink로 실행되는 경우가 많아(install.sh가 /usr/local/bin/jige -> 이 파일로 연결),
+# sys.path[0]이 symlink가 있는 디렉터리(예: /usr/local/bin)로 잡혀서 옆의 jigelib/를 못 찾음 —
+# 위에서 __file__.resolve()로 이미 구한 실제 디렉터리를 직접 sys.path에 넣어줘야 함.
+sys.path.insert(0, str(REPO_ROOT))
+from jigelib.display import (  # noqa: E402
+    _bold, _display_width, _pad, _sym,
+    _truncate_to_width, kind_icon, simplify_version_for_display, trust_badge, trust_label,
+)
+from jigelib.github import (  # noqa: E402
+    JIGE_LEGACY_RAW_BASE, LEGACY_ENTRY_TEMPLATE,
+    github_edit_url, github_new_file_url, github_new_issue_url,
+)
+from jigelib.i18n import t  # noqa: E402
+
 LOCAL_RECIPES_DIR = REPO_ROOT / "recipes"
 LOCAL_LEGACY_DIR = REPO_ROOT / "recipes" / "legacy"
 CACHE_DIR = Path.home() / "Library" / "Caches" / "jige" / "downloads"
@@ -75,203 +88,10 @@ SOURCE_LABEL = {
     "local": "local",
 }
 
-KIND_ICON_UNICODE = {"jim": "💻", "dogu": "🔧", "unknown": "❓"}  # jim=GUI 앱, dogu=CLI 도구
-KIND_ICON_ASCII = {"jim": "GUI", "dogu": "CLI", "unknown": "?"}
-
-
-def kind_icon(kind: str) -> str:
-    table = KIND_ICON_UNICODE if _supports_unicode() else KIND_ICON_ASCII
-    return table.get(kind, table["unknown"])
-
-JIGE_REPO_SLUG = "hoyacom/jige"
-JIGE_REPO = f"https://github.com/{JIGE_REPO_SLUG}"
-JIGE_LEGACY_RAW_BASE = f"https://raw.githubusercontent.com/{JIGE_REPO_SLUG}/main/recipes/legacy"
-
-
-def github_edit_url(path: str) -> str:
-    """GitHub 자체의 '파일 수정하면 자동 fork + PR 생성' 흐름을 그대로 가리킴 —
-    커스텀 서버/DB 없이 recipes/legacy/ 기여를 쉽게 하기 위한 링크일 뿐.
-    이미 있는 파일에 한 줄 보탤 때만 씀 — 새 파일은 github_new_file_url()."""
-    return f"{JIGE_REPO}/edit/main/{path}"
-
-
-def github_new_file_url(path: str, content: str = "") -> str:
-    """GitHub의 '새 파일 만들기 + 내용 미리 채우기(+자동 fork/PR)' URL. recipes/legacy/<token>.json이
-    아직 없는 새 토큰에 처음 추가할 때 씀."""
-    return f"{JIGE_REPO}/new/main?" + urllib.parse.urlencode({"filename": path, "value": content})
-
-
-def github_new_issue_url(title: str, body: str) -> str:
-    return f"{JIGE_REPO}/issues/new?" + urllib.parse.urlencode({"title": title, "body": body})
-
-
-LEGACY_ENTRY_TEMPLATE = """{
-  "<macOS 메이저 번호, 예: 12>": {
-    "commit_url": "<https://raw.githubusercontent.com/Homebrew/homebrew-cask/커밋SHA/Casks/x/token.rb — 이 macOS에서 쓸 수 있는 구버전이 담긴 특정 커밋>",
-    "found_by": "<depends_on 또는 info_plist — 그 커밋에 macOS 요구치가 명시돼 있었는지, 실제 파일을 받아 Info.plist로 확인했는지>",
-    "confirmations": []
-  }
-}"""
-
-
-def offer_github_contribution(title: str, body: str, fallback_edit_path: str | None = None) -> None:
-    """gh CLI(설치·로그인돼 있으면)로 터미널에서 바로 이슈를 올리게 묻고, 없거나
-    거절하면 웹에서 직접 할 수 있는 링크를 보여줌. 커스텀 서버·PR 자동화는 없음 —
-    gh도 안 되면 그냥 사람이 GitHub 웹에서 하는 것뿐."""
-    print()
-    print("--- 커뮤니티에 공유하기 (선택) ---")
-    print(title)
-    if shutil.which("gh") and sys.stdin.isatty():
-        answer = input("gh CLI로 지금 바로 이슈를 올릴까요? [y/N]: ").strip().lower()
-        if answer == "y":
-            try:
-                subprocess.run(
-                    ["gh", "issue", "create", "--repo", JIGE_REPO_SLUG,
-                     "--title", title, "--body", body],
-                    check=True,
-                )
-                return
-            except Exception as e:
-                print(f"(gh issue create 실패: {e} — 아래 링크로 직접 올려주세요)")
-    print(f"-> 이슈로 올리기: {github_new_issue_url(title, body)}")
-    if fallback_edit_path:
-        print(f"-> 또는 파일을 직접 고쳐서 PR 올리기: {github_edit_url(fallback_edit_path)}")
-
-
-def trust_badge(entry: dict) -> str:
-    """search처럼 짧게만 보여줄 때 쓰는 한 토큰짜리 신뢰 단계 표시.
-    UTF-8이 아닌 터미널에선 이모지/기호 대신 ASCII로."""
-    n = len(entry.get("confirmations") or [])
-    if n == 0:
-        return _sym("🆕", "NEW")
-    if n < 3:
-        return _sym(f"✓{n}", f"OK{n}")
-    return _sym(f"✓✓{n}", f"OK+{n}")
-
-
-def trust_label(entry: dict) -> str:
-    """recipes/legacy/<token>.json의 confirmations 배열 길이로 신뢰 단계를 보여줌.
-    confirmations는 실제로 설치해본 사람들이 GitHub PR로 한 줄씩 추가하는 기록이라,
-    jige가 뭘 자동 집계하는 게 아니라 그 배열 길이 자체가 신뢰 단계임."""
-    n = len(entry.get("confirmations") or [])
-    if n == 0:
-        return _sym("🆕", "NEW") + " 방금 등록됨 (공식 문서로 확인, 다른 사용자 확인 아직 없음)"
-    if n < 3:
-        return _sym("✓", "OK") + f" 실제 설치로 확인됨 ({n}명)"
-    return _sym("✓✓", "OK+") + f" 여러 명이 확인함 ({n}명)"
-
-
 MACOS_CODENAME = {
     "10.15": "catalina", "11": "big_sur", "12": "monterey", "13": "ventura",
     "14": "sonoma", "15": "sequoia", "26": "tahoe", "27": "golden_gate",
 }
-
-# ---------------------------------------------------------------------------
-# i18n — 완벽한 번역은 아니고, 표제부(헤더/명령어 설명)만 한/영/일 지원.
-# 나머지 내부 메시지는 한국어 그대로 둠.
-# ---------------------------------------------------------------------------
-
-STRINGS = {
-    "col_name": {"ko": "이름", "en": "Name", "ja": "名前"},
-    "col_kind": {"ko": "종류", "en": "Kind", "ja": "種類"},
-    "col_source": {"ko": "분류", "en": "Source", "ja": "分類"},
-    "col_version": {"ko": "버전", "en": "Version", "ja": "バージョン"},
-    "col_desc": {"ko": "설명", "en": "Description", "ja": "説明"},
-    "no_results": {
-        "ko": "'{q}' 검색 결과 없음 (Homebrew / MacPorts / 자체 레포지토리 전부).",
-        "en": "No results for '{q}' (checked Homebrew, MacPorts, and the local repo).",
-        "ja": "'{q}' の検索結果なし(Homebrew / MacPorts / ローカルリポジトリすべて)。",
-    },
-    "install_hint": {
-        # 터미널이 좁아도 예측 못 한 중간 지점에서 꺾이지 않도록 줄바꿈을 직접 넣고,
-        # 내용도 짧게 줄임(80컬럼 터미널에서도 여유 있게 들어가도록)
-        "ko": "설치: jige install <이름>\n      (Homebrew Cask는 지금 설치 가능, 나머지는 추후 지원)",
-        "en": "Install: jige install <name>\n         (Homebrew Cask installs now, the rest comes later)",
-        "ja": "インストール: jige install <名前>\n           (Homebrew Caskは今すぐ対応、残りは今後対応)",
-    },
-    "app_description": {
-        "ko": "brew 없이도 Homebrew·MacPorts·Mac App Store 공개 레시피를 읽어서 이 기기에 맞는 앱을 찾아 설치",
-        "en": "Find and install apps for this machine by reading Homebrew/MacPorts/Mac App Store's own public recipes — no brew required",
-        "ja": "brewなしでHomebrew・MacPorts・Mac App Storeの公開レシピを読み、このマシンに合うアプリを探してインストール",
-    },
-    "help_install": {
-        "ko": "앱 설치/업데이트 (brew install / port install)",
-        "en": "Install or update an app (like brew install / port install)",
-        "ja": "アプリのインストール/更新 (brew install / port install 相当)",
-    },
-    "help_search": {
-        "ko": "통합 검색 (brew search / port search)",
-        "en": "Search across all sources (like brew search / port search)",
-        "ja": "統合検索 (brew search / port search 相当)",
-    },
-    "help_info": {
-        "ko": "상세 정보, 설치 안 함 (brew info / port info)",
-        "en": "Show details without installing (like brew info / port info)",
-        "ja": "詳細情報を表示(インストールはしない、brew info / port info 相当)",
-    },
-    "help_uninstall": {
-        "ko": "제거, 휴지통행 (brew uninstall/remove)",
-        "en": "Uninstall, moved to Trash (like brew uninstall/remove)",
-        "ja": "アンインストール(ゴミ箱へ移動、brew uninstall/remove 相当)",
-    },
-    "help_list": {
-        "ko": "jige로 설치한 목록 (brew list / port installed)",
-        "en": "List apps jige has installed (like brew list / port installed)",
-        "ja": "jigeでインストールした一覧 (brew list / port installed 相当)",
-    },
-    "help_upgrade": {
-        "ko": "설치된 앱 최신판으로 재설치 (brew upgrade / port upgrade)",
-        "en": "Reinstall installed apps at the latest version (like brew upgrade / port upgrade)",
-        "ja": "インストール済みアプリを最新版に (brew upgrade / port upgrade 相当)",
-    },
-    "help_update": {
-        "ko": "jige 자체를 최신 코드로 갱신 (brew update / port selfupdate)",
-        "en": "Update jige itself to the latest code (like brew update / port selfupdate)",
-        "ja": "jige自体を最新コードに更新 (brew update / port selfupdate 相当)",
-    },
-    "help_config": {
-        "ko": "jige 설정 보기/변경 (예: Mac App Store 켜기/끄기)",
-        "en": "View/change jige settings (e.g. turn Mac App Store search on/off)",
-        "ja": "jigeの設定を表示/変更(例: Mac App Store検索のON/OFF)",
-    },
-    "help_completion": {
-        "ko": "탭 자동완성 스크립트 출력 (예: source <(jige completion zsh))",
-        "en": "Print the shell tab-completion script (e.g. source <(jige completion zsh))",
-        "ja": "タブ補完スクリプトを出力 (例: source <(jige completion zsh))",
-    },
-}
-
-
-def detect_lang() -> str:
-    env = os.environ.get("JIGE_LANG")
-    if env in ("ko", "en", "ja"):
-        return env
-    locale_str = ""
-    if platform.system() == "Darwin":
-        try:
-            locale_str = subprocess.check_output(
-                ["defaults", "read", "-g", "AppleLocale"], text=True,
-                stderr=subprocess.DEVNULL,
-            ).strip()
-        except Exception:
-            pass
-    if not locale_str:
-        locale_str = os.environ.get("LANG", "")
-    locale_str = locale_str.lower()
-    if locale_str.startswith("ko"):
-        return "ko"
-    if locale_str.startswith("ja"):
-        return "ja"
-    return "en"
-
-
-LANG = detect_lang()
-
-
-def t(key: str, **kwargs) -> str:
-    text = STRINGS.get(key, {}).get(LANG) or STRINGS.get(key, {}).get("en") or key
-    return text.format(**kwargs) if kwargs else text
-
 
 def sw_vers_codename() -> str:
     ver = subprocess.check_output(["sw_vers", "-productVersion"], text=True).strip()
@@ -504,8 +324,7 @@ def find_legacy_commit_live(token: str, target_major: int, cpu: str, max_candida
 
 def fetch_raw_github(url: str) -> str | None:
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "jige"})
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with urllib.request.urlopen(url, timeout=20) as r:
             return r.read().decode("utf-8", errors="replace")
     except Exception:
         return None
@@ -567,69 +386,6 @@ def load_homebrew_index(kind: str) -> list[dict]:
         except Exception:
             pass
     return data
-
-
-def _display_width(s: str) -> int:
-    """터미널에서 실제로 차지하는 칸 수. 한글/이모지처럼 두 칸 쓰는 문자가 있어서
-    len()만으로 패딩하면(파이썬은 글자 수만 셈) 한글이 섞인 칸이 실제보다 좁게
-    계산돼 테이블이 밀림 — search 결과에 한글 헤더(종류/분류/버전)·태그(🆕 등)가
-    섞이면서 실제로 겪은 문제. "A"(폭 모호, "…"·"★"·"▼" 등)도 2칸으로 침 — 한글
-    로케일 터미널에서는 이런 문자를 넓게 그리는 경우가 많아서("…" 때문에 줄바꿈이
-    생겼던 적 있음), 좀 넉넉하게 잡는 쪽이 줄바꿈/정렬 깨짐보다 안전함."""
-    width = 0
-    for ch in s:
-        width += 2 if unicodedata.east_asian_width(ch) in ("W", "F", "A") else 1
-    return width
-
-
-def _pad(s: str, width: int) -> str:
-    return s + " " * max(0, width - _display_width(s))
-
-
-def _supports_color() -> bool:
-    return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
-
-
-def _supports_unicode() -> bool:
-    """출력 인코딩이 UTF-8 계열이 아니면(옛 터미널, 특정 locale 등) 이모지/기호
-    대신 ASCII로 대체 — 깨진 문자(□, ?)로 나오는 것보단 밋밋해도 읽히는 게 나음."""
-    enc = (getattr(sys.stdout, "encoding", None) or "").lower()
-    return "utf" in enc
-
-
-def _sym(unicode_form: str, ascii_form: str) -> str:
-    return unicode_form if _supports_unicode() else ascii_form
-
-
-def _bold(s: str) -> str:
-    """항상 _pad()/_truncate_to_width()로 먼저 폭을 맞춘 뒤에 감싸야 함 — ANSI
-    코드 자체는 화면에 안 보이지만 글자 수로는 잡혀서, 먼저 감싸면 폭 계산이 틀어짐."""
-    return f"\033[1m{s}\033[0m" if _supports_color() else s
-
-
-def _truncate_to_width(s: str, max_width: int) -> str:
-    if _display_width(s) <= max_width:
-        return s
-    ellipsis = _sym("…", "...")
-    ellipsis_w = _display_width(ellipsis)
-    out: list[str] = []
-    w = 0
-    for ch in s:
-        cw = 2 if unicodedata.east_asian_width(ch) in ("W", "F", "A") else 1  # _display_width와 맞춤
-        if w + cw > max_width - ellipsis_w:
-            break
-        out.append(ch)
-        w += cw
-    return "".join(out) + ellipsis
-
-
-def simplify_version_for_display(version: str) -> str:
-    """search 결과 화면에만 쓰는 버전 표시 — 빌드번호/리비전 suffix(",175245"나
-    "-174740" 같은 것)는 보기엔 필요 없어서 뺌. 설치에 쓰는 실제 레시피의 version/
-    url/sha256은 이 함수를 안 거치고 fetch_recipe()로 새로 받아오므로 전혀 영향 없음."""
-    v = version.split(",")[0]
-    v = re.split(r"-(?=\d)", v, maxsplit=1)[0]
-    return v
 
 
 def _rank(query: str, *fields: str) -> int:
@@ -1264,8 +1020,7 @@ def fetch_recipe_from_cask_rb(url: str, cpu: str) -> dict:
     """brew가 하는 것처럼 — Homebrew-Cask의 특정 커밋(과거 버전 포함) raw .rb URL을
     직접 읽어서 jige recipe 스키마로 바꿈. 이 머신의 cpu에 맞춰 바로 url/sha256을
     확정해서 돌려줌(여러 macOS 코드네임별 variations는 필요 없음 — 지금 이 기기용)."""
-    req = urllib.request.Request(url, headers={"User-Agent": "jige"})
-    with urllib.request.urlopen(req, timeout=20) as r:
+    with urllib.request.urlopen(url, timeout=20) as r:
         text = r.read().decode("utf-8", errors="replace")
 
     parsed = parse_cask_rb(text)
@@ -2482,12 +2237,12 @@ def cmd_upgrade(token: str | None, latest: bool = False) -> None:
     if not state:
         print("jige로 설치한 게 없어서 업그레이드할 대상이 없습니다.")
         return
-    for t in list(state.keys()):
-        print(f"--- {t} ---")
+    for tok in list(state.keys()):
+        print(f"--- {tok} ---")
         try:
-            cmd_install(t, latest=latest)
+            cmd_install(tok, latest=latest)
         except SystemExit as e:
-            print(f"{t} 업그레이드 실패(건너뜀): {e}")
+            print(f"{tok} 업그레이드 실패(건너뜀): {e}")
         print()
 
 

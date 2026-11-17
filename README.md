@@ -36,6 +36,7 @@ $ jige install hop
 | `jige uninstall <이름> [--zap]` | `uninstall` |
 | `jige update` | `update` / `selfupdate` |
 | `jige config mas on\|off` | Mac App Store 검색 켜기/끄기 (기본 꺼짐) |
+| `jige user-repo add/remove/list/scan` | 집 NAS·회사 서버 등 직접 등록한 저장소에서 설치 (`--repo <이름>`으로 지정) |
 
 기호: `💻` GUI 앱(**jim**, 짐) · `🔧` CLI 도구(**dogu**, 도구) · `*` 설치됨 · `▼` 이 macOS용 대체판(`jige info`로 자세히)
 
@@ -47,6 +48,7 @@ $ jige install hop
 - **MacPorts** — `ports.macports.org` 공개 API (검색만)
 - **Mac App Store** — Apple 공개 검색 API, 설치는 `mas` 필요
 - **이 저장소** — 위 어디에도 없는 것만 `recipes/`에
+- **사용자 레포지토리** — 집 NAS·회사 서버 등 직접 등록(`jige user-repo add`)
 
 다운로드한 파일은 레시피의 sha256으로 검증한 뒤 설치합니다.
 
